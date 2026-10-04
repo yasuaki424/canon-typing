@@ -1,0 +1,1348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canon Typing</title>
+<style>
+:root{
+  --bg:#0d1322; --panel:#172039; --panel2:#1f2a48; --text:#e8eefc; --muted:#8fa0c4;
+  --accent:#ffcc33; --good:#4ade80; --bad:#f87171; --cmd:#60a5fa; --line:#2c3a60;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",sans-serif}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:8px 12px}
+#stage{position:relative;flex:none;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+canvas{display:block;width:100%;height:100%}
+.overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  gap:min(14px,2vh);background:rgba(8,12,24,.72);backdrop-filter:blur(3px);text-align:center;padding:12px;overflow:auto}
+.overlay.show{display:flex}
+h1{margin:0;font-size:clamp(28px,min(6vw,9vh),80px);letter-spacing:.04em;font-weight:900;
+  background:linear-gradient(180deg,#fff6c9,#ffcc33 55%,#ff8a3d);-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 4px 0 rgba(0,0,0,.4))}
+h2{margin:0;font-size:clamp(26px,min(5vw,8vh),64px);font-weight:900}
+.sub{color:var(--muted);margin:0;font-size:clamp(12px,1.4vw,16px)}
+.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;align-items:center}
+button{font:inherit;cursor:pointer;border-radius:10px;padding:10px 20px;font-weight:700;
+  font-size:clamp(13px,1.4vw,17px);background:var(--panel2);color:var(--text);border:1px solid var(--line);transition:.15s}
+button:hover{transform:translateY(-1px);border-color:var(--accent)}
+button.primary{background:linear-gradient(180deg,#ffd75a,#ffae1f);color:#2a1a00;border:none}
+button.sel{background:var(--cmd);color:#051127;border-color:var(--cmd)}
+button:disabled{opacity:.5;cursor:default;transform:none}
+.label{font-size:13px;color:var(--muted);margin-right:4px}
+input.code{font:inherit;font-size:20px;letter-spacing:.3em;text-transform:uppercase;width:170px;text-align:center;
+  padding:8px;border-radius:10px;border:1px solid var(--line);background:#0b1020;color:var(--text)}
+#roomCode{font-size:clamp(30px,min(5vw,8vh),60px);font-weight:900;letter-spacing:.25em;color:var(--accent);min-height:1.2em}
+#lobbyStatus{min-height:1.4em;color:var(--muted)}
+#lobbyStatus.err{color:var(--bad)}
+details{max-width:760px;text-align:left;background:rgba(23,32,57,.92);border:1px solid var(--line);border-radius:10px;padding:6px 14px;font-size:13px;color:#cbd5f0}
+details summary{cursor:pointer;font-weight:700;color:var(--text)}
+details li{margin:2px 0}
+code,kbd{background:#0b1020;border:1px solid var(--line);border-radius:5px;padding:0 5px;color:var(--accent);font-family:Consolas,monospace}
+
+#panel{flex:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 16px;
+  display:grid;grid-template-columns:minmax(0,1.3fr) minmax(180px,1fr) auto;gap:4px 16px;align-items:center}
+#wordLine{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;min-width:0}
+#en{font-family:Consolas,"Courier New",monospace;font-size:clamp(22px,2.6vw,36px);font-weight:700;letter-spacing:.04em}
+#en .hit{color:var(--good)}
+#jp{font-size:clamp(14px,1.6vw,20px);color:#cbd5f0}
+#inputLine{font-family:Consolas,monospace;font-size:clamp(17px,2vw,24px);display:flex;align-items:center;gap:8px;min-height:36px;
+  background:#0b1020;border-radius:8px;padding:2px 12px;border:1px solid var(--line);overflow:hidden}
+#inputLine .prompt{color:var(--muted)}
+#typed.good{color:var(--good)} #typed.cmd{color:var(--cmd)} #typed.bad{color:var(--bad)}
+.caret{display:inline-block;width:2px;height:1.1em;background:var(--accent);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+#btnFull{padding:6px 12px;font-size:13px}
+#msg{min-height:1.3em;font-weight:700;font-size:14px}
+#msg.good{color:var(--good)} #msg.bad{color:var(--bad)} #msg.cmd{color:var(--cmd)} #msg.info{color:var(--accent)}
+#help{grid-column:2 / span 2;font-size:12px;color:var(--muted);text-align:right}
+#help b{color:var(--text)}
+.shakeX{animation:shx .25s}
+@keyframes shx{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+@media (max-width:760px){#panel{grid-template-columns:1fr auto}#inputLine{grid-column:1 / span 2;grid-row:2}#help{grid-column:1 / span 2;text-align:left}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+
+    <!-- タイトル -->
+    <div class="overlay show" id="ovTitle">
+      <h1>Canon Typing</h1>
+      <p class="sub">英単語をタイピングして砲弾を装填！　相手の防御壁を崩して戦車を撃破せよ</p>
+      <div class="row">
+        <span class="label">問題レベル</span>
+        <button class="lv sel" data-lv="5">英検5級</button>
+        <button class="lv" data-lv="4">英検4級</button>
+      </div>
+      <div class="row">
+        <button class="primary" id="btnCpu">🤖 CPUと対戦</button>
+        <button class="primary" id="btnOnline">🌐 オンライン対戦</button>
+      </div>
+      <details>
+        <summary>遊び方</summary>
+        <ul>
+          <li>表示された英単語を入力して <kbd>Enter</kbd> → 正解で砲弾を1発装填（最大5発）</li>
+          <li>5連続正解で <b>榴弾</b> を1発獲得（最大3発）。榴弾は地形を破壊でき、戦車には2倍のダメージ</li>
+          <li><code>up</code> / <code>down</code> … 砲塔の角度を上げる / 下げる（3°ずつ）</li>
+          <li><code>forward</code> / <code>back</code> … 戦車を前進 / 後退（戦車5台分）</li>
+          <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
+          <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）</li>
+          <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
+          <li>入力は <b>半角英数モード（IMEオフ）</b> で。すべて <kbd>Enter</kbd> で確定</li>
+        </ul>
+      </details>
+    </div>
+
+    <!-- オンラインロビー -->
+    <div class="overlay" id="ovLobby">
+      <h2 style="font-size:clamp(24px,min(4vw,7vh),42px)">オンライン対戦</h2>
+      <p class="sub">部屋を作った人が「部屋コード」を相手に伝え、相手はそのコードで参加します</p>
+      <div class="row"><button class="primary" id="btnHost">部屋を作る</button></div>
+      <div id="roomCode"></div>
+      <div class="row">
+        <input class="code" id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false">
+        <button id="btnJoin">参加する</button>
+      </div>
+      <div id="lobbyStatus"></div>
+      <button id="btnLobbyBack">戻る</button>
+    </div>
+
+    <!-- 結果 -->
+    <div class="overlay" id="ovResult">
+      <h2 id="resTitle">YOU WIN!</h2>
+      <p class="sub" id="resSub"></p>
+      <div class="row">
+        <button class="primary" id="btnRematch">再対戦</button>
+        <button id="btnTop">トップに戻る</button>
+      </div>
+      <div id="resStatus" class="sub"></div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div id="wordLine"><span id="en">Canon Typing</span><span id="jp">モードを選んでスタート</span></div>
+    <div id="inputLine"><span class="prompt">&gt;</span><span id="typed"></span><span class="caret"></span></div>
+    <button id="btnFull" title="全画面表示の切り替え">⛶ 全画面</button>
+    <div id="msg"></div>
+    <div id="help"><b>up</b>/<b>down</b> 角度・<b>forward</b>/<b>back</b> 移動・<b>fly</b> 飛行・<b>fire</b> 発射・<b>bomb</b> 榴弾・<b>barrier</b> バリア ／ <b>Enter</b>で確定</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ====================================================================
+//  定数
+// ====================================================================
+const W = 1920, H = 760, DEG = Math.PI / 180;
+const G = 400, V = 850;                 // 重力・初速(px/s)
+const START_X = 300, WALL_GAP = 58, WALL_W = 36, WALL_H = 152, CELL = 4;
+const HP_MAX = 100, DMG = 10, BOMB_DMG = 20;          // 砲弾10発で撃破 / 榴弾は2倍
+const DMG_R = 40, CARVE_R = 18, BOMB_CARVE_R = 30, CRATER_R = 55;
+const BAR_R = 58, BAR_PER_SHELL = 3;
+const MAX_AMMO = 5, MAX_BOMBS = 3, STREAK_FOR_BOMB = 5;
+const ANG_STEP = 3, ANG_MIN = 5, ANG_MAX = 80, BARREL = 32;
+const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 5, MOVE_SPEED = 260;   // forward/back で戦車5台分
+const X_MIN = 50, X_MAX = W / 2 - 160;                             // 自陣内のみ移動可
+const FLY_H = H / 4, FLY_T = 3, FLY_SPEED = 380;                   // fly: 画面1/4上昇・3秒
+const PREVIEW_T = 0.6;                  // 予測軌道を表示する時間(秒)
+const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire'];
+const PEER_PREFIX = 'canon-typing-v2-';
+
+// ====================================================================
+//  単語リスト  英語|漢字|ひらがな（ひらがな省略時はカタカナ語）
+// ====================================================================
+const WORDS_SRC = {
+'5': `dog|犬|いぬ
+cat|猫|ねこ
+bird|鳥|とり
+fish|魚|さかな
+book|本|ほん
+pen|ペン
+desk|机|つくえ
+chair|椅子|いす
+school|学校|がっこう
+teacher|先生|せんせい
+student|生徒|せいと
+friend|友達|ともだち
+family|家族|かぞく
+mother|母|はは
+father|父|ちち
+sister|姉妹|しまい
+brother|兄弟|きょうだい
+house|家|いえ
+room|部屋|へや
+water|水|みず
+milk|牛乳|ぎゅうにゅう
+bread|パン
+rice|ご飯|ごはん
+egg|卵|たまご
+apple|林檎|りんご
+orange|オレンジ
+banana|バナナ
+flower|花|はな
+tree|木|き
+sun|太陽|たいよう
+moon|月|つき
+star|星|ほし
+sky|空|そら
+rain|雨|あめ
+snow|雪|ゆき
+river|川|かわ
+mountain|山|やま
+sea|海|うみ
+red|赤|あか
+blue|青|あお
+green|緑|みどり
+white|白|しろ
+black|黒|くろ
+yellow|黄色|きいろ
+big|大きい|おおきい
+small|小さい|ちいさい
+new|新しい|あたらしい
+old|古い|ふるい
+hot|暑い|あつい
+cold|寒い|さむい
+happy|幸せな|しあわせな
+good|良い|よい
+morning|朝|あさ
+night|夜|よる
+today|今日|きょう
+week|週|しゅう
+year|年|とし
+Sunday|日曜日|にちようび
+Monday|月曜日|げつようび
+spring|春|はる
+summer|夏|なつ
+fall|秋|あき
+winter|冬|ふゆ
+eat|食べる|たべる
+drink|飲む|のむ
+run|走る|はしる
+walk|歩く|あるく
+swim|泳ぐ|およぐ
+sing|歌う|うたう
+play|遊ぶ|あそぶ
+read|読む|よむ
+write|書く|かく
+speak|話す|はなす
+listen|聞く|きく
+see|見る|みる
+like|好き|すき
+want|欲しい|ほしい
+open|開ける|あける
+close|閉める|しめる
+cook|料理する|りょうりする
+study|勉強する|べんきょうする
+sleep|眠る|ねむる
+car|車|くるま
+bus|バス
+train|電車|でんしゃ
+bike|自転車|じてんしゃ
+ball|ボール
+hand|手|て
+foot|足|あし
+head|頭|あたま
+eye|目|め
+ear|耳|みみ
+mouth|口|くち
+name|名前|なまえ
+music|音楽|おんがく
+picture|絵|え
+color|色|いろ
+three|三|さん
+seven|七|なな
+ten|十|じゅう
+lunch|昼食|ちゅうしょく
+breakfast|朝食|ちょうしょく
+dinner|夕食|ゆうしょく
+kitchen|台所|だいどころ
+park|公園|こうえん
+zoo|動物園|どうぶつえん
+window|窓|まど
+clock|時計|とけい
+shoe|靴|くつ
+hat|帽子|ぼうし
+bag|鞄|かばん
+box|箱|はこ
+girl|女の子|おんなのこ
+boy|男の子|おとこのこ`,
+'4': `travel|旅行する|りょこうする
+weather|天気|てんき
+hospital|病院|びょういん
+library|図書館|としょかん
+station|駅|えき
+museum|博物館|はくぶつかん
+airport|空港|くうこう
+restaurant|レストラン
+shop|店|みせ
+bridge|橋|はし
+country|国|くに
+world|世界|せかい
+history|歴史|れきし
+science|科学|かがく
+language|言語|げんご
+message|伝言|でんごん
+question|質問|しつもん
+answer|答え|こたえ
+problem|問題|もんだい
+idea|考え|かんがえ
+plan|計画|けいかく
+future|未来|みらい
+dream|夢|ゆめ
+power|力|ちから
+money|お金|おかね
+ticket|切符|きっぷ
+letter|手紙|てがみ
+festival|祭り|まつり
+concert|演奏会|えんそうかい
+contest|競技会|きょうぎかい
+vacation|休暇|きゅうか
+holiday|休日|きゅうじつ
+tomorrow|明日|あした
+yesterday|昨日|きのう
+minute|分|ふん
+hour|時間|じかん
+early|早い|はやい
+late|遅い|おそい
+famous|有名な|ゆうめいな
+popular|人気のある|にんきのある
+important|大切な|たいせつな
+different|違う|ちがう
+difficult|難しい|むずかしい
+easy|簡単な|かんたんな
+interesting|面白い|おもしろい
+busy|忙しい|いそがしい
+free|自由な|じゆうな
+tired|疲れた|つかれた
+hungry|空腹の|くうふくの
+sick|病気の|びょうきの
+kind|親切な|しんせつな
+strong|強い|つよい
+quiet|静かな|しずかな
+beautiful|美しい|うつくしい
+expensive|高価な|こうかな
+cheap|安い|やすい
+heavy|重い|おもい
+bring|持ってくる|もってくる
+borrow|借りる|かりる
+lend|貸す|かす
+build|建てる|たてる
+buy|買う|かう
+sell|売る|うる
+catch|捕まえる|つかまえる
+choose|選ぶ|えらぶ
+forget|忘れる|わすれる
+remember|覚える|おぼえる
+arrive|到着する|とうちゃくする
+leave|出発する|しゅっぱつする
+begin|始める|はじめる
+finish|終える|おえる
+visit|訪問する|ほうもんする
+invite|招待する|しょうたいする
+hope|望む|のぞむ
+worry|心配する|しんぱいする
+wait|待つ|まつ
+understand|理解する|りかいする
+practice|練習する|れんしゅうする
+enjoy|楽しむ|たのしむ
+decide|決める|きめる
+send|送る|おくる
+teach|教える|おしえる
+learn|学ぶ|まなぶ
+carry|運ぶ|はこぶ
+climb|登る|のぼる
+drive|運転する|うんてんする
+grow|育つ|そだつ
+lose|失う|うしなう
+spend|過ごす|すごす
+hurry|急ぐ|いそぐ
+village|村|むら
+island|島|しま
+forest|森|もり
+lake|湖|みずうみ
+ocean|海洋|かいよう
+season|季節|きせつ
+animal|動物|どうぶつ
+vegetable|野菜|やさい
+umbrella|傘|かさ
+homework|宿題|しゅくだい
+uniform|制服|せいふく
+building|建物|たてもの
+hobby|趣味|しゅみ
+culture|文化|ぶんか
+example|例|れい
+information|情報|じょうほう
+newspaper|新聞|しんぶん
+magazine|雑誌|ざっし
+gift|贈り物|おくりもの
+wind|風|かぜ
+cloud|雲|くも
+health|健康|けんこう
+doctor|医者|いしゃ
+nurse|看護師|かんごし
+scientist|科学者|かがくしゃ
+artist|芸術家|げいじゅつか
+enough|十分な|じゅうぶんな`
+};
+const WORDS = {};
+for (const k in WORDS_SRC) {
+  WORDS[k] = WORDS_SRC[k].trim().split('\n').map(l => {
+    const [en, kj, kn] = l.trim().split('|');
+    return { en, jp: kn ? `${kj}（${kn}）` : kj };
+  }).filter(w => !COMMANDS.includes(w.en.toLowerCase()));
+}
+// ====================================================================
+//  ユーティリティ
+// ====================================================================
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $ = id => document.getElementById(id);
+
+// ====================================================================
+//  サウンド (WebAudio で合成)
+// ====================================================================
+let AC = null, noiseBuf = null;
+function audioInit(){
+  if (!AC) {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = AC.createBuffer(1, AC.sampleRate * 1.5, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (AC.state === 'suspended') AC.resume();
+}
+function tone(freq, dur, type = 'sine', vol = .2, when = 0, slideTo = null){
+  if (!AC) return;
+  const t = AC.currentTime + when, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .01);
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + .02);
+}
+function noise(dur, vol, freq = 1000, when = 0){
+  if (!AC) return;
+  const t = AC.currentTime + when, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = noiseBuf; f.type = 'lowpass';
+  f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(60, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  s.connect(f).connect(g).connect(AC.destination); s.start(t); s.stop(t + dur);
+}
+const sfx = {
+  correct(){ tone(880,.12,'triangle',.25); tone(1320,.2,'triangle',.25,.08); },
+  bombGet(){ [784,988,1175,1568].forEach((f,i)=>tone(f,.15,'square',.12,i*.07)); },
+  wrong(){ tone(170,.2,'square',.12); },
+  cmd(){ tone(700,.06,'square',.08); },
+  move(){ noise(.4,.15,400); },
+  fly(){ for (let i = 0; i < 8; i++) noise(.06,.25,700,i*.07); tone(200,.6,'sawtooth',.06,0,500); },
+  fire(){ noise(.35,.5,2600); tone(130,.25,'sine',.4,0,45); },
+  bomb(){ noise(.5,.6,1800); tone(90,.4,'sine',.5,0,35); },
+  boom(size){ const big = size >= 1; noise(big?1.3:.55, big?.9:.45, big?1600:1100); tone(big?70:90, big?.8:.35,'sine',.45,0,30); },
+  barrier(){ tone(300,.5,'sine',.2,0,1300); tone(450,.5,'triangle',.08,.05,1800); },
+  block(){ tone(1600,.15,'triangle',.15,0,500); },
+  go(){ tone(523,.12,'square',.12); tone(784,.25,'square',.12,.12); },
+  win(){ [523,659,784,1046].forEach((f,i)=>tone(f,.3,'triangle',.22,i*.14)); },
+  lose(){ [392,330,262,196].forEach((f,i)=>tone(f,.35,'triangle',.2,i*.18)); },
+};
+
+// ====================================================================
+//  画面レイアウト（どの画面サイズでも全体が収まるように縮尺を合わせる）
+// ====================================================================
+const cv = $('cv'), ctx = cv.getContext('2d');
+function layout(){
+  const app = $('app'), panel = $('panel'), stage = $('stage');
+  const cs = getComputedStyle(app);
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const gap = parseFloat(cs.rowGap) || 8;
+  const availW = app.clientWidth - padX;
+  let w = availW;
+  for (let i = 0; i < 3; i++) {   // パネルの高さは幅で変わるので数回合わせる
+    panel.style.width = w + 'px';
+    const availH = app.clientHeight - padY - gap - panel.offsetHeight;
+    w = Math.max(280, Math.min(availW, availH * W / H));
+  }
+  stage.style.width = w + 'px'; stage.style.height = (w * H / W) + 'px'; panel.style.width = w + 'px';
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr * H / W);
+}
+window.addEventListener('resize', layout);
+document.addEventListener('fullscreenchange', () => {
+  $('btnFull').textContent = document.fullscreenElement ? '⛶ 元に戻す' : '⛶ 全画面';
+  setTimeout(layout, 50);
+});
+$('btnFull').onclick = e => {
+  e.currentTarget.blur();
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => setMsg('全画面表示に切り替えられませんでした（F11キーもお試しください）', 'bad'));
+};
+layout();
+
+// ====================================================================
+//  地形・戦車・防御壁
+// ====================================================================
+function genTerrain(seed){
+  const r = mulberry32(seed), h = new Float32Array(W + 1);
+  const flat = r() < 0.25, base = 560 + r() * 40;
+  if (flat) {
+    const slope = (r() - .5) * 80;
+    for (let x = 0; x <= W; x++) h[x] = base + slope * (x / W - .5);
+  } else {
+    const comps = []; let budget = 150;
+    const n = 2 + Math.floor(r() * 2);
+    for (let i = 0; i < n; i++) {
+      const amp = budget * (.35 + r() * .4); budget -= amp;
+      comps.push({ amp, k: (1.5 + r() * 3.5) * Math.PI * 2 / W, p: r() * Math.PI * 2 });
+    }
+    for (let x = 0; x <= W; x++) { let y = base; for (const c of comps) y += c.amp * Math.sin(c.k * x + c.p); h[x] = y; }
+  }
+  for (const side of [0, 1]) {  // 初期位置と防御壁の周辺を平らにする
+    const P = 440, B = 110, p = h[side ? W - START_X : START_X];
+    for (let x = 0; x <= W; x++) {
+      const d = side ? W - x : x;
+      if (d <= P) h[x] = p;
+      else if (d < P + B) { let s = (d - P) / B; s = s * s * (3 - 2 * s); h[x] = p * (1 - s) + h[x] * s; }
+    }
+  }
+  for (let x = 0; x <= W; x++) h[x] = clamp(h[x], 300, H - 40);
+  const clouds = []; for (let i = 0; i < 8; i++) clouds.push({ x: r() * W, y: 40 + r() * 220, s: .7 + r() * 1 });
+  return { h, flat, clouds };
+}
+function terrainAt(x){
+  const h = game.terrain;
+  if (x <= 0) return h[0]; if (x >= W) return h[W];
+  const i = x | 0, f = x - i; return h[i] * (1 - f) + h[i + 1] * f;
+}
+function crater(x, y, r){   // 榴弾による地形破壊
+  const h = game.terrain;
+  for (let i = Math.max(0, Math.ceil(x - r)); i <= Math.min(W, Math.floor(x + r)); i++) {
+    const bottom = y + Math.sqrt(r * r - (i - x) ** 2);
+    if (h[i] < bottom) h[i] = Math.min(H - 12, bottom);
+  }
+}
+function mkTank(side){
+  const x = side ? W - START_X : START_X;
+  return { side, x, tx: x, y: terrainAt(x), alt: 0, flyT: 0, dir: side ? -1 : 1, angle: 30, hp: HP_MAX,
+           ammo: 0, bombs: 0, streak: 0, barrier: 0, flash: 0, recoil: 0, dead: false, rotor: 0 };
+}
+function mkWall(side){
+  const x0 = side === 0 ? START_X + WALL_GAP : W - START_X - WALL_GAP - WALL_W;
+  const base = terrainAt(x0 + WALL_W / 2), cols = WALL_W / CELL, rows = WALL_H / CELL;
+  return { x0, top: base - WALL_H, cols, rows, cells: new Uint8Array(cols * rows).fill(1) };
+}
+function wallHit(w, x, y){
+  const c = Math.floor((x - w.x0) / CELL), r = Math.floor((y - w.top) / CELL);
+  return c >= 0 && c < w.cols && r >= 0 && r < w.rows && w.cells[r * w.cols + c] === 1;
+}
+function carve(w, x, y, rad){
+  let n = 0;
+  for (let r = 0; r < w.rows; r++) for (let c = 0; c < w.cols; c++) {
+    const i = r * w.cols + c; if (!w.cells[i]) continue;
+    const cx = w.x0 + c * CELL + CELL / 2, cy = w.top + r * CELL + CELL / 2;
+    if ((cx - x) ** 2 + (cy - y) ** 2 < rad * rad) { w.cells[i] = 0; n++; }
+  }
+  return n;
+}
+const isFlying = t => t.flyT > 0 || t.alt > 1;
+function tipAt(t, ang){
+  const a = ang * DEG;
+  return { x: t.x + t.dir * Math.cos(a) * BARREL, y: t.y - 22 - Math.sin(a) * BARREL };
+}
+function tankHit(t, x, y){ return Math.abs(x - t.x) < (isFlying(t) ? 30 : 26) && y > t.y - 36 && y < t.y + 4; }
+function moveLimits(side){ return side === 0 ? [X_MIN, X_MAX] : [W - X_MAX, W - X_MIN]; }
+
+// ====================================================================
+//  ゲーム状態
+// ====================================================================
+let game = null;
+let level = '5';
+const typing = { word: null, input: '', start: 0, recent: [], times: [] };
+const cpu = { timer: 0, threshold: 1, shots: 0, aiming: false, target: 0, useBomb: false, loads: 0 };
+
+function startGame({ mode, role = null, seed }){
+  if (seed == null) seed = (Math.random() * 1e9) | 0;
+  const ter = genTerrain(seed);
+  game = { mode, role, seed, terrain: ter.h, flat: ter.flat, clouds: ter.clouds,
+           tanks: [], walls: [], shells: [], parts: [], floats: [],
+           phase: mode === 'demo' ? 'demo' : 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0,
+           winner: -1, mySide: role === 'guest' ? 1 : 0 };
+  game.tanks = [mkTank(0), mkTank(1)];
+  game.walls = [mkWall(0), mkWall(1)];
+  if (mode === 'demo') return;
+  Object.assign(cpu, { timer: 0, threshold: 1 + Math.floor(Math.random() * 5), shots: 0, aiming: false, useBomb: false, loads: 0 });
+  typing.times = []; typing.input = ''; typing.recent = [];
+  nextWord();
+  hideOverlays();
+  if (document.activeElement) document.activeElement.blur();
+  setMsg('READY…　半角英数モードで入力してください', 'info');
+  renderPanel();
+}
+const isHost = () => game && game.mode === 'online' && game.role === 'host';
+const isGuest = () => game && game.mode === 'online' && game.role === 'guest';
+const isAuth = () => game && (game.mode === 'cpu' || isHost());
+
+function names(){
+  if (game.mode === 'cpu') return ['YOU', 'CPU'];
+  return game.mySide === 0 ? ['YOU', 'RIVAL'] : ['RIVAL', 'YOU'];
+}
+
+// ---------- アクション（権威側で実行） ----------
+function gainCorrect(side){   // 正解：砲弾装填＋連続正解カウント
+  const t = game.tanks[side]; let loaded = false, bomb = false;
+  if (t.ammo < MAX_AMMO) { t.ammo++; loaded = true; }
+  t.streak++;
+  if (t.streak >= STREAK_FOR_BOMB) { t.streak = 0; if (t.bombs < MAX_BOMBS) { t.bombs++; bomb = true; } }
+  return { loaded, bomb };
+}
+function gainMiss(side){ game.tanks[side].streak = 0; }
+
+function fireShots(side, n, bomb = false){
+  const t = game.tanks[side];
+  for (let i = 0; i < n; i++) {
+    const ang = t.angle + (i - (n - 1) / 2) * 1.4;
+    const a = ang * DEG, sp = V * (1 + (bomb ? 0 : (Math.random() - .5) * .03)), tip = tipAt(t, ang);
+    game.shells.push({ id: game.nextId++, x: tip.x, y: tip.y, vx: t.dir * Math.cos(a) * sp, vy: -Math.sin(a) * sp,
+                       owner: side, bomb, trail: [] });
+  }
+  fireFx(side, bomb);
+  if (isHost()) netSend({ t: 'fire', side, b: bomb ? 1 : 0 });
+}
+function fireFx(side, bomb){
+  const t = game.tanks[side], tip = tipAt(t, t.angle);
+  t.recoil = 1; bomb ? sfx.bomb() : sfx.fire();
+  for (let i = 0; i < (bomb ? 22 : 14); i++) game.parts.push({ x: tip.x, y: tip.y, vx: t.dir * rnd(40, 160) + rnd(-40, 40), vy: rnd(-90, 20),
+    life: rnd(.3, .7), max: .7, size: rnd(3, 7), color: i < 5 ? (bomb ? '#ff7849' : '#fff3b0') : '#9ca3af', g: -30 });
+}
+function doCommand(side, c){
+  const t = game.tanks[side];
+  if (t.dead || game.phase !== 'play') return 'ng';
+  switch (c) {
+    case 'up':   t.angle = Math.min(ANG_MAX, t.angle + ANG_STEP); return 'ok';
+    case 'down': t.angle = Math.max(ANG_MIN, t.angle - ANG_STEP); return 'ok';
+    case 'forward': case 'back': {
+      const [lo, hi] = moveLimits(side), d = (c === 'forward' ? 1 : -1) * t.dir * MOVE_STEP;
+      const nx = clamp(t.tx + d, lo, hi);
+      if (Math.abs(nx - t.tx) < 1) return 'limit';
+      t.tx = nx; return 'ok';
+    }
+    case 'fly':
+      if (t.flyT > 0) return 'flying';
+      t.flyT = FLY_T; sfx.fly();
+      if (isHost()) netSend({ t: 'fly', side });
+      return 'ok';
+    case 'bomb':
+      if (t.bombs <= 0) return 'nobomb';
+      fireShots(side, 1, true); t.bombs--; return 'ok';
+    case 'fire':
+      if (t.ammo <= 0) return 'empty';
+      fireShots(side, t.ammo); t.ammo = 0; return 'ok';
+    case 'barrier':
+      if (t.ammo <= 0) return 'empty';
+      t.barrier += t.ammo * BAR_PER_SHELL; t.ammo = 0; sfx.barrier();
+      if (isHost()) netSend({ t: 'bar', side });
+      return 'ok';
+  }
+  return 'ng';
+}
+
+// ---------- 物理 ----------
+function checkShell(s){
+  const e = 1 - s.owner, et = game.tanks[e];
+  if (et.barrier > 0 && !et.dead && (s.x - et.x) ** 2 + (s.y - (et.y - 16)) ** 2 < BAR_R * BAR_R) return 'barrier';
+  if (wallHit(game.walls[e], s.x, s.y)) return 'wall';
+  if (!et.dead && tankHit(et, s.x, s.y)) return 'tank';
+  if (s.y >= terrainAt(s.x)) return 'ground';
+  if (s.x < -150 || s.x > W + 150 || s.y > H + 50) return 'out';
+  return null;
+}
+function simulate(dt){
+  for (const s of game.shells) {
+    s.trail.push({ x: s.x, y: s.y }); if (s.trail.length > 12) s.trail.shift();
+    const steps = Math.max(1, Math.ceil(Math.hypot(s.vx, s.vy) * dt / 3)), h = dt / steps;
+    for (let k = 0; k < steps; k++) {
+      s.vy += G * h; s.x += s.vx * h; s.y += s.vy * h;
+      const hit = checkShell(s);
+      if (hit) { s.dead = true; if (hit !== 'out') explodeAt(s.x, s.y, s.owner, hit === 'barrier' ? 'barrier' : 'hit', s.bomb); break; }
+    }
+  }
+  game.shells = game.shells.filter(s => !s.dead);
+}
+function updateTanks(dt){
+  for (const t of game.tanks) {
+    if (isAuth()) {
+      t.barrier = Math.max(0, t.barrier - dt);
+      if (!t.dead) {
+        const d = t.tx - t.x, st = MOVE_SPEED * dt;
+        t.x = Math.abs(d) <= st ? t.tx : t.x + Math.sign(d) * st;
+        t.flyT = Math.max(0, t.flyT - dt);
+        const ta = t.flyT > 0 ? FLY_H : 0, sa = FLY_SPEED * dt;
+        t.alt = Math.abs(ta - t.alt) <= sa ? ta : t.alt + Math.sign(ta - t.alt) * sa;
+      } else { t.alt = Math.max(0, t.alt - FLY_SPEED * dt); t.flyT = 0; }
+    }
+    t.y = terrainAt(t.x) - t.alt;
+    t.rotor += dt * 40;
+    t.flash = Math.max(0, t.flash - dt); t.recoil = Math.max(0, t.recoil - dt * 4);
+  }
+}
+function explodeAt(x, y, owner, kind, bomb = false){
+  const e = 1 - owner, et = game.tanks[e];
+  let w = -1, hitSide = -1, died = -1;
+  const dmg = bomb ? BOMB_DMG : DMG;
+  if (kind === 'hit') {
+    if (bomb) crater(x, y, CRATER_R);
+    if (carve(game.walls[e], x, y, bomb ? BOMB_CARVE_R : CARVE_R) > 0) w = e;
+    if (!et.dead && et.barrier <= 0 && Math.hypot(x - et.x, y - (et.y - 14)) < DMG_R * (bomb ? 1.3 : 1)) {
+      et.hp = Math.max(0, et.hp - dmg); hitSide = e;
+      if (et.hp <= 0) { et.dead = true; died = e; }
+    }
+  }
+  // 壁・地形の削れを一致させるため座標は丸めない
+  const ev = { t: 'ex', x, y, k: kind, b: bomb ? 1 : 0, w, h: hitSide, d: died, dm: dmg };
+  applyExplosionFx(ev);
+  if (isHost()) netSend(ev);
+  if (died >= 0) endGame(owner);
+}
+function applyExplosionFx(ev){
+  const { x, y } = ev;
+  if (ev.k === 'barrier') {
+    sfx.block();
+    for (let i = 0; i < 16; i++) { const a = rnd(0, Math.PI * 2), v = rnd(60, 200);
+      game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(.2, .5), max: .5, size: rnd(2, 4), color: '#a5f3fc', g: 0 }); }
+    addFloat('BLOCK!', x, y - 10, '#a5f3fc');
+    return;
+  }
+  if (isGuest()) {
+    if (ev.b) crater(x, y, CRATER_R);
+    if (ev.w >= 0) carve(game.walls[ev.w], x, y, ev.b ? BOMB_CARVE_R : CARVE_R);
+    if (ev.h >= 0) { const t = game.tanks[ev.h]; t.hp = Math.max(0, t.hp - ev.dm); }
+  }
+  explosionParts(x, y, ev.b ? 1 : 0);
+  sfx.boom(ev.b ? 1 : 0);
+  game.shake = Math.max(game.shake, ev.b ? 9 : 4);
+  if (ev.h >= 0) {
+    const t = game.tanks[ev.h]; t.flash = .5; game.shake = ev.b ? 14 : 10;
+    addFloat(`-${ev.dm}`, t.x, t.y - 64, '#ff6b6b');
+  }
+  if (ev.d >= 0) {
+    const t = game.tanks[ev.d]; t.dead = true; t.hp = 0;
+    setTimeout(() => { if (!game) return; explosionParts(t.x, t.y - 15, 2); sfx.boom(2); game.shake = 22; }, 150);
+  }
+}
+function explosionParts(x, y, size){   // size: 0=砲弾 1=榴弾 2=戦車撃破
+  const n = [26, 50, 90][size], vmax = [230, 320, 420][size], colors = ['#fff3b0', '#ffd166', '#fb8500', '#e63946', '#6b7280'];
+  for (let i = 0; i < n; i++) { const a = rnd(0, Math.PI * 2), v = rnd(40, vmax);
+    game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (size ? 120 : 60), life: rnd(.4, size ? 1.4 : .9),
+      max: size ? 1.4 : .9, size: rnd(2, size ? 7 : 5), color: colors[i % colors.length], g: 380 }); }
+  if (size === 1) for (let i = 0; i < 24; i++) { const a = rnd(Math.PI * 1.1, Math.PI * 1.9), v = rnd(100, 300);
+    game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(.6, 1.2), max: 1.2, size: rnd(2, 5), color: '#7a5230', g: 500 }); }
+  for (let i = 0; i < [5, 9, 14][size]; i++)
+    game.parts.push({ x: x + rnd(-10, 10), y: y + rnd(-8, 4), vx: rnd(-20, 20), vy: rnd(-50, -15), life: rnd(.8, 1.6), max: 1.6,
+      size: rnd(8, [14, 22, 26][size]), color: '#4b5563', g: -10, smoke: true });
+  game.parts.push({ ring: true, x, y, r: 4, R: [CARVE_R * 2.4, CRATER_R * 1.6, 140][size], life: .35, max: .35 });
+}
+function addFloat(text, x, y, color){ game.floats.push({ text, x, y, color, life: 1.1 }); }
+
+function endGame(winner){
+  if (game.phase === 'over') return;
+  const g = game; game.phase = 'over'; game.winner = winner;
+  if (isHost()) netSend({ t: 'over', w: winner });
+  setMsg('');
+  setTimeout(() => {
+    if (game !== g) return;
+    (winner === g.mySide ? sfx.win : sfx.lose)();
+    showResult();
+  }, 2000);
+}
+
+// ---------- CPU ----------
+function playerAvg(){
+  const t = typing.times; if (!t.length) return 3.0;
+  return clamp(t.reduce((a, b) => a + b, 0) / t.length, 1, 8);
+}
+function simulateLanding(side, ang){
+  const t = game.tanks[side], a = ang * DEG, tip = tipAt(t, ang);
+  let x = tip.x, y = tip.y, vx = t.dir * Math.cos(a) * V, vy = -Math.sin(a) * V; const dt = 1 / 120;
+  for (let i = 0; i < 4000; i++) {
+    vy += G * dt; x += vx * dt; y += vy * dt;
+    if (x < -50 || x > W + 50 || y >= terrainAt(x)) return x;
+  }
+  return x;
+}
+function bestAngle(side, tx, from, to){
+  let a0 = from, bd = 1e9;
+  for (let a = from; a <= to; a += .5) { const d = Math.abs(simulateLanding(side, a) - tx); if (d < bd) { bd = d; a0 = a; } }
+  return { a: a0, err: bd };
+}
+function cpuPlan(){
+  const p = game.tanks[0], t = game.tanks[1];
+  const tx = cpu.shots === 0 ? p.x + 210 + Math.random() * 120   // 初弾は手前に外す
+                             : p.x - 70 + Math.random() * 240;   // 以降は戦車の手前〜後ろ
+  const low = bestAngle(1, tx, 6, 45), high = bestAngle(1, tx, 46, ANG_MAX);
+  const preferHigh = cpu.shots > 0 && Math.random() < .35;
+  let pick = preferHigh ? high : low; const other = preferHigh ? low : high;
+  if (pick.err > 120 && other.err < pick.err) pick = other;
+  // 起伏で届かない場合は榴弾で地形を崩す
+  cpu.useBomb = cpu.shots > 0 && pick.err > 120 && t.bombs > 0;
+  cpu.target = pick.a; cpu.aiming = true;
+}
+function cpuUpdate(dt){
+  const t = game.tanks[1]; if (t.dead) return;
+  const interval = 1.5 * playerAvg();
+  cpu.timer += dt;
+  if (cpu.timer >= interval) {
+    cpu.timer -= interval;
+    if (t.ammo < MAX_AMMO) t.ammo++;
+    if (++cpu.loads % STREAK_FOR_BOMB === 0 && t.bombs < MAX_BOMBS) t.bombs++;
+  }
+  if (!cpu.aiming && t.ammo >= cpu.threshold) cpuPlan();
+  if (cpu.aiming) {
+    const d = cpu.target - t.angle, step = 40 * dt;
+    if (Math.abs(d) <= step) {
+      t.angle = cpu.target;
+      if (cpu.useBomb) { fireShots(1, 1, true); t.bombs--; }
+      else { fireShots(1, t.ammo); t.ammo = 0; cpu.threshold = 1 + Math.floor(Math.random() * 5); }
+      cpu.shots++; cpu.aiming = false;
+    } else t.angle += Math.sign(d) * step;
+  }
+}
+
+// ====================================================================
+//  タイピング
+// ====================================================================
+function nextWord(){
+  const list = WORDS[level]; let w;
+  do { w = list[Math.floor(Math.random() * list.length)]; } while (typing.recent.includes(w.en) && list.length > 12);
+  typing.recent.push(w.en); if (typing.recent.length > 10) typing.recent.shift();
+  typing.word = w; typing.input = ''; typing.start = performance.now();
+}
+let msgTimer = 0;
+function setMsg(text, cls = ''){
+  const m = $('msg'); m.textContent = text; m.className = cls;
+  clearTimeout(msgTimer); if (text) msgTimer = setTimeout(() => { m.textContent = ''; }, 2400);
+}
+function renderPanel(){
+  if (!game || game.mode === 'demo') return;
+  const w = typing.word, inp = typing.input, lw = w.en.toLowerCase();
+  let m = 0; while (m < inp.length && m < lw.length && inp[m] === lw[m]) m++;
+  $('en').innerHTML = `<span class="hit">${esc(w.en.slice(0, m))}</span>${esc(w.en.slice(m))}`;
+  $('jp').textContent = w.jp;
+  const ty = $('typed'); ty.textContent = inp;
+  ty.className = !inp ? '' : lw.startsWith(inp) ? 'good' : COMMANDS.some(c => c.startsWith(inp)) ? 'cmd' : 'bad';
+}
+function submit(){
+  const s = typing.input.trim().toLowerCase(); typing.input = '';
+  if (!s) return renderPanel();
+  const me = game.tanks[game.mySide];
+  if (s === typing.word.en.toLowerCase()) {
+    typing.times.push((performance.now() - typing.start) / 1000);
+    if (typing.times.length > 6) typing.times.shift();
+    if (isGuest()) netSend({ t: 'load' });
+    const r = gainCorrect(game.mySide);   // ゲストは見た目用に先行反映（ホストの状態で上書きされる）
+    if (r.bomb) { sfx.bombGet(); setMsg(`${STREAK_FOR_BOMB}連続正解！ 榴弾を獲得（${me.bombs}/${MAX_BOMBS}）— bomb で発射`, 'info'); }
+    else {
+      sfx.correct();
+      const st = me.streak ? `　連続 ${me.streak}/${STREAK_FOR_BOMB}` : '';
+      setMsg(r.loaded ? `正解！ 砲弾を装填（${me.ammo}/${MAX_AMMO}）${st}` : `正解！ 装填は満タンです${st}`, r.loaded ? 'good' : 'info');
+    }
+    nextWord();
+  } else if (COMMANDS.includes(s)) {
+    const c = s === 'barrire' ? 'barrier' : s;
+    let err = null;
+    if ((c === 'fire' || c === 'barrier') && me.ammo <= 0) err = '砲弾が装填されていません';
+    else if (c === 'bomb' && me.bombs <= 0) err = `榴弾がありません（${STREAK_FOR_BOMB}連続正解で獲得）`;
+    else if (c === 'fly' && me.flyT > 0) err = 'すでに飛行中です';
+    else if (me.dead) err = '';
+    if (err !== null) { sfx.wrong(); if (err) setMsg(err, 'bad'); }
+    else {
+      const n = me.ammo;
+      let res = 'ok';
+      if (isGuest()) netSend({ t: 'cmd', c }); else res = doCommand(game.mySide, c);
+      if (res === 'limit') { sfx.wrong(); setMsg('これ以上は移動できません', 'bad'); }
+      else {
+        if (c === 'up' || c === 'down') sfx.cmd();
+        if (c === 'forward' || c === 'back') sfx.move();
+        const label = { up: '砲塔 ▲', down: '砲塔 ▼', forward: '前進 ▶', back: '◀ 後退', fly: 'ヘリコプターで上昇！',
+          fire: `発射！ ×${n}`, bomb: '榴弾発射！', barrier: `バリア展開！ ${n * BAR_PER_SHELL}秒` }[c];
+        setMsg(label, 'cmd');
+      }
+    }
+  } else {
+    if (isGuest()) netSend({ t: 'miss' });
+    gainMiss(game.mySide);
+    sfx.wrong(); setMsg(`ミス！「${s}」　連続正解リセット`, 'bad');
+    const p = $('inputLine'); p.classList.remove('shakeX'); void p.offsetWidth; p.classList.add('shakeX');
+  }
+  renderPanel();
+}
+document.addEventListener('keydown', e => {
+  if (!game || game.phase !== 'play') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.isComposing || e.key === 'Process') { setMsg('IMEをオフ（半角英数）にしてください', 'bad'); return; }
+  if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
+  if (e.key === 'Backspace') { e.preventDefault(); typing.input = typing.input.slice(0, -1); }
+  else if (e.key === 'Escape') typing.input = '';
+  else if (e.key.length === 1 && /[a-zA-Z\-' ]/.test(e.key)) { e.preventDefault(); if (typing.input.length < 24) typing.input += e.key.toLowerCase(); }
+  else return;
+  renderPanel();
+});
+
+// ====================================================================
+//  ループ
+// ====================================================================
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (game) update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+function update(dt){
+  if (game.phase === 'ready') {
+    game.readyT -= dt;
+    if (game.readyT <= 0) { game.phase = 'play'; game.goT = .9; typing.start = performance.now(); sfx.go(); setMsg('GO！ 英単語を入力してEnter', 'info'); }
+  }
+  if (game.goT > 0) game.goT -= dt;
+  if (isAuth()) {
+    simulate(dt);
+    if (game.mode === 'cpu' && game.phase === 'play') cpuUpdate(dt);
+  }
+  updateTanks(dt);
+  for (const p of game.parts) { p.life -= dt; if (p.ring) continue; p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+  game.parts = game.parts.filter(p => p.life > 0);
+  for (const f of game.floats) { f.life -= dt; f.y -= 30 * dt; }
+  game.floats = game.floats.filter(f => f.life > 0);
+  game.shake = Math.max(0, game.shake - dt * 30);
+  if (isHost()) { game.sendT += dt; if (game.sendT >= 1 / 30) { game.sendT = 0; sendState(); } }
+}
+
+// ====================================================================
+//  描画
+// ====================================================================
+function rr(x, y, w, h, r){ ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function draw(){
+  const s = cv.width / W;
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  if (!game) return;
+  const now = performance.now() / 1000;
+  ctx.save();
+  if (game.shake > 0) ctx.translate(rnd(-1, 1) * game.shake, rnd(-1, 1) * game.shake);
+
+  // 空
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#1b2b5a'); sky.addColorStop(.55, '#4f7bbf'); sky.addColorStop(1, '#f5c48a');
+  ctx.fillStyle = sky; ctx.fillRect(-30, -30, W + 60, H + 60);
+  ctx.fillStyle = 'rgba(255,240,200,.9)'; ctx.beginPath(); ctx.arc(W * .5, 120, 40, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,240,200,.15)'; ctx.beginPath(); ctx.arc(W * .5, 120, 72, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.55)';
+  for (const c of game.clouds) {
+    const x = ((c.x + now * 8 * c.s) % (W + 300)) - 150;
+    ctx.beginPath(); ctx.ellipse(x, c.y, 60 * c.s, 18 * c.s, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + 34 * c.s, c.y - 11 * c.s, 40 * c.s, 18 * c.s, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(40,60,110,.45)'; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, 430 + Math.sin(x * .004 + game.seed % 7) * 40 + Math.sin(x * .013) * 16);
+  ctx.lineTo(W, H); ctx.fill();
+
+  // 地面
+  const h = game.terrain;
+  const dirt = ctx.createLinearGradient(0, 300, 0, H);
+  dirt.addColorStop(0, '#7a5230'); dirt.addColorStop(1, '#3d2716');
+  ctx.fillStyle = dirt; ctx.beginPath(); ctx.moveTo(0, H + 30);
+  for (let x = 0; x <= W; x += 4) ctx.lineTo(x, h[x]);
+  ctx.lineTo(W, h[W]); ctx.lineTo(W, H + 30); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#5fb04a'; ctx.lineWidth = 10; ctx.lineJoin = 'round'; ctx.beginPath();
+  for (let x = 0; x <= W; x += 4) x ? ctx.lineTo(x, h[x] + 3) : ctx.moveTo(x, h[x] + 3);
+  ctx.stroke();
+  ctx.strokeStyle = '#8fd46f'; ctx.lineWidth = 2; ctx.beginPath();
+  for (let x = 0; x <= W; x += 4) x ? ctx.lineTo(x, h[x]) : ctx.moveTo(x, h[x]);
+  ctx.stroke();
+
+  // 防御壁
+  for (const w of game.walls) {
+    for (let r = 0; r < w.rows; r++) for (let c = 0; c < w.cols; c++) {
+      if (!w.cells[r * w.cols + c]) continue;
+      const brick = ((r >> 1) + ((c + ((r >> 1) & 1)) >> 1)) & 1;
+      ctx.fillStyle = brick ? '#9aa6bd' : '#7d8aa3';
+      ctx.fillRect(w.x0 + c * CELL, w.top + r * CELL, CELL, CELL);
+    }
+  }
+
+  if (game.mode !== 'demo' && (game.phase === 'play' || game.phase === 'ready')) drawPreview(game.tanks[game.mySide]);
+  for (const t of game.tanks) drawTank(t, now);
+
+  // 砲弾・榴弾
+  for (const sh of game.shells) {
+    ctx.strokeStyle = sh.bomb ? 'rgba(255,120,73,.6)' : 'rgba(255,220,150,.5)'; ctx.lineWidth = sh.bomb ? 5 : 3; ctx.beginPath();
+    sh.trail.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.lineTo(sh.x, sh.y); ctx.stroke();
+    ctx.fillStyle = sh.bomb ? '#111' : '#1f2937'; ctx.beginPath(); ctx.arc(sh.x, sh.y, sh.bomb ? 8 : 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = sh.bomb ? (Math.sin(now * 30) > 0 ? '#ff4d4d' : '#ffd166') : '#ffd166';
+    ctx.beginPath(); ctx.arc(sh.x, sh.y, sh.bomb ? 3.2 : 2.2, 0, Math.PI * 2); ctx.fill();
+    if (sh.y < 0) {
+      ctx.fillStyle = sh.bomb ? 'rgba(255,90,60,.95)' : 'rgba(255,209,102,.9)'; ctx.beginPath();
+      ctx.moveTo(sh.x, 6); ctx.lineTo(sh.x - 9, 22); ctx.lineTo(sh.x + 9, 22); ctx.fill();
+    }
+  }
+
+  // パーティクル
+  for (const p of game.parts) {
+    const a = clamp(p.life / p.max, 0, 1);
+    if (p.ring) {
+      const k = 1 - a; ctx.strokeStyle = `rgba(255,230,160,${a})`; ctx.lineWidth = 4 * a + 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r + (p.R - p.r) * k, 0, Math.PI * 2); ctx.stroke(); continue;
+    }
+    ctx.globalAlpha = p.smoke ? a * .6 : a; ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.smoke ? p.size * (1.6 - a * .6) : p.size * (.4 + a * .6), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center'; ctx.font = 'bold 34px "Segoe UI",sans-serif';
+  for (const f of game.floats) {
+    ctx.globalAlpha = clamp(f.life, 0, 1); ctx.fillStyle = '#000'; ctx.fillText(f.text, f.x + 2, f.y + 2);
+    ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  if (game.mode !== 'demo') drawHUD(now);
+}
+function drawPreview(t){
+  if (t.dead) return;
+  const a = t.angle * DEG, tip = tipAt(t, t.angle);
+  let x = tip.x, y = tip.y, vx = t.dir * Math.cos(a) * V, vy = -Math.sin(a) * V;
+  const dt = 1 / 60, n = Math.round(PREVIEW_T / dt);
+  for (let i = 1; i <= n; i++) {
+    vy += G * dt; x += vx * dt; y += vy * dt;
+    if (y >= terrainAt(x)) break;
+    if (i % 2 === 0) {
+      ctx.fillStyle = `rgba(255,255,255,${.95 * (1 - i / n) + .1})`;
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+function drawBarrel(t){
+  const a = t.angle * DEG, L = BARREL - t.recoil * 7;
+  ctx.strokeStyle = '#374151'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(t.dir * Math.cos(a) * L, -22 - Math.sin(a) * L); ctx.stroke();
+  ctx.strokeStyle = '#6b7280'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(t.dir * Math.cos(a) * L, -22 - Math.sin(a) * L); ctx.stroke();
+}
+function drawHeli(t, col){
+  const d = t.dir;
+  drawBarrel(t);
+  // スキッド
+  ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-24, 0); ctx.lineTo(22, 0); ctx.quadraticCurveTo(28, 0, 30, -4);
+  ctx.moveTo(-12, 0); ctx.lineTo(-10, -8); ctx.moveTo(12, 0); ctx.lineTo(10, -8); ctx.stroke();
+  // テールブーム・テールローター
+  ctx.strokeStyle = col[1]; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(-d * 18, -18); ctx.lineTo(-d * 54, -24); ctx.stroke();
+  ctx.fillStyle = col[1]; ctx.beginPath(); ctx.moveTo(-d * 50, -24); ctx.lineTo(-d * 60, -38); ctx.lineTo(-d * 58, -22); ctx.fill();
+  ctx.strokeStyle = 'rgba(30,30,30,.8)'; ctx.lineWidth = 2;
+  const tr = t.rotor * 1.5;
+  ctx.beginPath(); ctx.moveTo(-d * 57 + Math.cos(tr) * 9, -30 + Math.sin(tr) * 9); ctx.lineTo(-d * 57 - Math.cos(tr) * 9, -30 - Math.sin(tr) * 9); ctx.stroke();
+  // 胴体
+  ctx.fillStyle = col[0]; ctx.beginPath(); ctx.ellipse(0, -17, 27, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = col[2]; ctx.fillRect(-18, -12, 30, 2);
+  ctx.fillStyle = '#bae6fd'; ctx.beginPath(); ctx.ellipse(d * 13, -19, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(d * 13, -19, 6, Math.PI * 1.1, Math.PI * 1.5); ctx.stroke();
+  // メインローター
+  ctx.fillStyle = '#374151'; ctx.fillRect(-2, -36, 4, 8);
+  ctx.fillStyle = 'rgba(200,210,230,.18)'; ctx.beginPath(); ctx.ellipse(0, -36, 52, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#111827'; ctx.lineWidth = 3;
+  const c1 = Math.cos(t.rotor) * 52, c2 = Math.cos(t.rotor + Math.PI / 2) * 52;
+  ctx.beginPath(); ctx.moveTo(-c1, -36); ctx.lineTo(c1, -36); ctx.moveTo(-c2, -36); ctx.lineTo(c2, -36); ctx.stroke();
+}
+function drawTankBody(t, col){
+  drawBarrel(t);
+  ctx.fillStyle = col[1]; ctx.beginPath(); ctx.arc(0, -20, 13, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = col[0]; rr(-24, -21, 48, 13, 4); ctx.fill();
+  ctx.fillStyle = col[2]; ctx.fillRect(-20, -19, 40, 3);
+  ctx.fillStyle = '#1f2937'; rr(-28, -10, 56, 12, 6); ctx.fill();
+  ctx.fillStyle = '#6b7280';
+  const off = (t.x * .4) % 10;
+  for (let i = -20; i <= 20; i += 10) { ctx.beginPath(); ctx.arc(i, -4, 3.5, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = '#4b5563'; for (let i = -26 + off; i < 26; i += 10) ctx.fillRect(i, 0, 3, 2);
+}
+function drawTank(t, now){
+  const col = t.side === 0 ? ['#3b82f6', '#1d4ed8', '#93c5fd'] : ['#ef4444', '#b91c1c', '#fca5a5'];
+  // 飛行中の影
+  if (t.alt > 2) {
+    const gy = terrainAt(t.x);
+    ctx.fillStyle = `rgba(0,0,0,${.35 * (1 - t.alt / (FLY_H * 1.5))})`;
+    ctx.beginPath(); ctx.ellipse(t.x, gy, 26, 5, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.save(); ctx.translate(t.x, t.y + (isFlying(t) ? Math.sin(now * 5) * 2 : 0));
+  if (t.dead) ctx.filter = 'grayscale(1) brightness(.4)';
+  isFlying(t) && !t.dead ? drawHeli(t, col) : drawTankBody(t, col);
+  if (t.flash > 0 && !t.dead) { ctx.globalAlpha = t.flash * 1.6; ctx.fillStyle = '#fff'; rr(-30, -38, 60, 40, 6); ctx.fill(); ctx.globalAlpha = 1; }
+  ctx.filter = 'none';
+  ctx.restore();
+
+  // バリア（泡）
+  if (t.barrier > 0 && !t.dead) {
+    const cx = t.x, cy = t.y - 16, pulse = Math.sin(now * 6) * 2;
+    ctx.globalAlpha = t.barrier < 1.5 ? (Math.sin(now * 25) > 0 ? 1 : .35) : 1;
+    const g = ctx.createRadialGradient(cx - 15, cy - 18, 5, cx, cy, BAR_R + pulse);
+    g.addColorStop(0, 'rgba(255,255,255,.35)'); g.addColorStop(.6, 'rgba(120,220,255,.12)'); g.addColorStop(1, 'rgba(90,200,255,.45)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, BAR_R + pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(165,243,252,.9)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, BAR_R - 9 + pulse, Math.PI * 1.1 + now, Math.PI * 1.35 + now); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (game.mode !== 'demo' && t.side === game.mySide && (game.phase === 'ready' || game.goT > 0)) {
+    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center'; ctx.font = 'bold 26px "Segoe UI",sans-serif';
+    const by = t.y - 90 + Math.sin(now * 6) * 4;
+    ctx.fillText('YOU', t.x, by); ctx.beginPath(); ctx.moveTo(t.x - 10, by + 8); ctx.lineTo(t.x + 10, by + 8); ctx.lineTo(t.x, by + 20); ctx.fill();
+  }
+}
+const HUD_K = 1.45, HUD_W = 330, HUD_H = 112;
+function drawHUD(now){
+  const nm = names();
+  for (const side of [0, 1]) {
+    ctx.save();
+    ctx.translate(side === 0 ? 18 : W - 18 - HUD_W * HUD_K, 14); ctx.scale(HUD_K, HUD_K);
+    drawHudPanel(game.tanks[side], nm[side], side, now);
+    ctx.restore();
+  }
+  let banner = null;
+  if (game.phase === 'ready') banner = game.readyT > 1 ? 'READY' : 'SET';
+  else if (game.goT > 0) banner = 'GO!';
+  if (banner) {
+    ctx.textAlign = 'center'; ctx.font = '900 120px "Segoe UI",sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillText(banner, W / 2 + 5, 330 + 5);
+    ctx.fillStyle = '#ffd166'; ctx.fillText(banner, W / 2, 330);
+  }
+}
+function drawHudPanel(t, name, side, now){
+  const PW = HUD_W;
+  ctx.fillStyle = 'rgba(8,12,24,.55)'; rr(0, 0, PW, HUD_H, 12); ctx.fill();
+  ctx.textAlign = 'left'; ctx.font = 'bold 17px "Segoe UI",sans-serif';
+  ctx.fillStyle = side === 0 ? '#93c5fd' : '#fca5a5'; ctx.fillText(name, 14, 24);
+  // 状態バッジ
+  const badges = [];
+  if (t.barrier > 0) badges.push(['#67e8f9', `BARRIER ${t.barrier.toFixed(1)}s`]);
+  if (t.flyT > 0) badges.push(['#fde68a', `FLY ${t.flyT.toFixed(1)}s`]);
+  let bx0 = 74; ctx.font = 'bold 12px "Segoe UI",sans-serif';
+  for (const [c, s] of badges) { ctx.fillStyle = c; ctx.fillText(s, bx0, 23); bx0 += ctx.measureText(s).width + 10; }
+  ctx.fillStyle = '#cbd5f0'; ctx.font = '14px "Segoe UI","Meiryo",sans-serif';
+  ctx.fillText(`角度 ${Math.round(t.angle)}°`, PW - 80, 24);
+  // 耐久力ゲージ（10発分の目盛り）
+  const bx = 14, by = 34, bw = PW - 80, bh = 16, r = t.hp / HP_MAX;
+  if (t.barrier > 0) {
+    ctx.save(); ctx.shadowColor = '#67e8f9'; ctx.shadowBlur = 14 + Math.sin(now * 8) * 8;
+    ctx.fillStyle = '#67e8f9'; rr(bx - 3, by - 3, bw + 6, bh + 6, 6); ctx.fill(); ctx.restore();
+  }
+  ctx.fillStyle = '#111827'; rr(bx, by, bw, bh, 4); ctx.fill();
+  ctx.fillStyle = r > .6 ? '#4ade80' : r > .3 ? '#facc15' : '#f87171';
+  if (r > 0) { rr(bx, by, bw * r, bh, 4); ctx.fill(); }
+  if (t.barrier > 0 && r > 0) {
+    const sh = ctx.createLinearGradient(bx, 0, bx + bw, 0), p = (now * .8) % 1;
+    sh.addColorStop(clamp(p - .15, 0, 1), 'rgba(255,255,255,0)'); sh.addColorStop(p, 'rgba(255,255,255,.7)');
+    sh.addColorStop(clamp(p + .15, 0, 1), 'rgba(255,255,255,0)');
+    ctx.fillStyle = sh; rr(bx, by, bw * r, bh, 4); ctx.fill();
+  }
+  const ticks = HP_MAX / DMG;
+  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
+  for (let i = 1; i < ticks; i++) { ctx.beginPath(); ctx.moveTo(bx + bw * i / ticks, by); ctx.lineTo(bx + bw * i / ticks, by + bh); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px "Segoe UI",sans-serif'; ctx.fillText(`${t.hp}`, bx + bw + 10, by + 13);
+  // 装填数
+  ctx.fillStyle = '#cbd5f0'; ctx.font = '13px "Segoe UI","Meiryo",sans-serif'; ctx.fillText('装填', bx, 76);
+  for (let i = 0; i < MAX_AMMO; i++) {
+    rr(bx + 36 + i * 24, 66, 18, 10, 5);
+    if (i < t.ammo) { ctx.fillStyle = '#ffd166'; ctx.fill(); } else { ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px "Segoe UI",sans-serif'; ctx.fillText(`${t.ammo}/${MAX_AMMO}`, bx + 36 + MAX_AMMO * 24 + 4, 76);
+  // 榴弾
+  ctx.fillStyle = '#cbd5f0'; ctx.font = '13px "Segoe UI","Meiryo",sans-serif'; ctx.fillText('榴弾', bx, 101);
+  for (let i = 0; i < MAX_BOMBS; i++) {
+    const cx = bx + 45 + i * 24; ctx.beginPath(); ctx.arc(cx, 96, 7, 0, Math.PI * 2);
+    if (i < t.bombs) { ctx.fillStyle = '#ff7849'; ctx.fill(); ctx.fillStyle = '#fff3'; ctx.beginPath(); ctx.arc(cx - 2, 94, 2.5, 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px "Segoe UI",sans-serif'; ctx.fillText(`${t.bombs}/${MAX_BOMBS}`, bx + 36 + MAX_BOMBS * 24 + 4, 101);
+  // 連続正解（自分のみ）
+  if (side === game.mySide) {
+    const sx = 196; ctx.fillStyle = '#cbd5f0'; ctx.font = '12px "Segoe UI","Meiryo",sans-serif'; ctx.fillText('連続', sx, 101);
+    for (let i = 0; i < STREAK_FOR_BOMB; i++) {
+      ctx.beginPath(); ctx.arc(sx + 36 + i * 14, 97, 4.5, 0, Math.PI * 2);
+      if (i < t.streak) { ctx.fillStyle = '#4ade80'; ctx.fill(); } else { ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 1.2; ctx.stroke(); }
+    }
+  }
+}
+
+// ====================================================================
+//  画面遷移
+// ====================================================================
+function hideOverlays(){ document.querySelectorAll('.overlay').forEach(o => o.classList.remove('show')); }
+function show(id){ hideOverlays(); $(id).classList.add('show'); }
+function goTitle(){
+  netClose();
+  startGame({ mode: 'demo' });
+  show('ovTitle');
+  $('en').textContent = 'Canon Typing'; $('jp').textContent = 'モードを選んでスタート'; $('typed').textContent = ''; setMsg('');
+}
+function showResult(){
+  const win = game.winner === game.mySide;
+  $('resTitle').textContent = win ? 'YOU WIN!' : 'YOU LOSE…';
+  $('resTitle').style.color = win ? '#ffd166' : '#f87171';
+  $('resSub').textContent = win ? '相手の戦車を撃破しました！' : '自分の戦車が破壊されました';
+  $('resStatus').textContent = '';
+  $('btnRematch').disabled = false;
+  net.myReady = false;
+  show('ovResult');
+}
+document.querySelectorAll('.lv').forEach(b => b.onclick = () => {
+  level = b.dataset.lv; document.querySelectorAll('.lv').forEach(x => x.classList.toggle('sel', x === b));
+});
+$('btnCpu').onclick = () => { audioInit(); startGame({ mode: 'cpu' }); };
+$('btnOnline').onclick = () => { audioInit(); $('roomCode').textContent = ''; lobbyStatus(''); show('ovLobby'); };
+$('btnLobbyBack').onclick = () => goTitle();
+$('btnHost').onclick = () => hostRoom();
+$('btnJoin').onclick = () => joinRoom($('joinCode').value);
+$('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom($('joinCode').value); });
+$('btnTop').onclick = () => { if (game && game.mode === 'online') netSend({ t: 'bye' }); goTitle(); };
+$('btnRematch').onclick = () => {
+  if (game.mode === 'cpu') { startGame({ mode: 'cpu' }); return; }
+  net.myReady = true; $('btnRematch').disabled = true;
+  netSend({ t: 'rematch' });
+  $('resStatus').textContent = net.peerReady ? '開始します…' : '相手の返答を待っています…';
+  if (isHost()) tryRematch();
+};
+
+// ====================================================================
+//  オンライン対戦 (PeerJS / WebRTC P2P)
+//  ホストが全ての判定を行い、ゲストはコマンド送信と描画のみ
+// ====================================================================
+let net = { peer: null, conn: null, myReady: false, peerReady: false, closing: false };
+function loadPeerJS(){
+  return new Promise((res, rej) => {
+    if (window.Peer) return res();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('通信ライブラリ(PeerJS)の読み込みに失敗しました。インターネット接続を確認してください。'));
+    document.head.appendChild(s);
+  });
+}
+function lobbyStatus(t, err = false){ const e = $('lobbyStatus'); e.textContent = t; e.className = err ? 'err' : ''; }
+function genCode(){ const cs = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++) s += cs[Math.floor(Math.random() * cs.length)]; return s; }
+function netSend(o){ if (net.conn && net.conn.open) net.conn.send(o); }
+function netClose(){
+  net.closing = true;
+  try { net.conn && net.conn.close(); } catch {}
+  try { net.peer && net.peer.destroy(); } catch {}
+  net = { peer: null, conn: null, myReady: false, peerReady: false, closing: false };
+}
+function bindConn(c){
+  c.on('data', onNet);
+  c.on('close', () => { if (net.conn === c && !net.closing) onDisconnected(); });
+  c.on('error', () => { if (net.conn === c && !net.closing) onDisconnected(); });
+}
+function onDisconnected(){
+  const inLobby = $('ovLobby').classList.contains('show');
+  netClose();
+  if (inLobby) { lobbyStatus('接続が切れました。もう一度お試しください。', true); return; }
+  if (game && game.mode === 'online') {
+    game.phase = 'over';
+    $('resTitle').textContent = '接続が切れました'; $('resTitle').style.color = '#f87171';
+    $('resSub').textContent = '相手との通信が終了しました'; $('resStatus').textContent = '';
+    $('btnRematch').disabled = true; show('ovResult');
+  }
+}
+async function hostRoom(){
+  lobbyStatus('準備中…');
+  try { await loadPeerJS(); } catch (e) { lobbyStatus(e.message, true); return; }
+  netClose();
+  const code = genCode(), peer = new Peer(PEER_PREFIX + code); net.peer = peer;
+  $('roomCode').textContent = '';
+  peer.on('open', () => { $('roomCode').textContent = code; lobbyStatus('このコードを相手に伝えて、参加を待っています…'); });
+  peer.on('connection', c => {
+    if (net.conn) { c.on('open', () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); }); return; }
+    net.conn = c; bindConn(c);
+    c.on('open', () => { lobbyStatus('相手が参加しました！'); hostStart(); });
+  });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id') hostRoom();
+    else lobbyStatus('通信エラー: ' + e.type, true);
+  });
+}
+async function joinRoom(raw){
+  const code = (raw || '').trim().toUpperCase();
+  if (code.length !== 5) { lobbyStatus('5文字の部屋コードを入力してください', true); return; }
+  lobbyStatus('接続中…');
+  try { await loadPeerJS(); } catch (e) { lobbyStatus(e.message, true); return; }
+  netClose();
+  const peer = new Peer(); net.peer = peer;
+  peer.on('open', () => {
+    const c = peer.connect(PEER_PREFIX + code, { reliable: true });
+    net.conn = c; bindConn(c);
+    c.on('open', () => lobbyStatus('接続しました！まもなく開始します…'));
+  });
+  peer.on('error', e => {
+    lobbyStatus(e.type === 'peer-unavailable' ? '部屋が見つかりません。コードを確認してください。' : '通信エラー: ' + e.type, true);
+  });
+}
+function hostStart(){
+  net.myReady = net.peerReady = false;
+  const seed = (Math.random() * 1e9) | 0;
+  netSend({ t: 'start', seed });
+  startGame({ mode: 'online', role: 'host', seed });
+}
+function tryRematch(){ if (net.myReady && net.peerReady) hostStart(); }
+const r1 = v => Math.round(v * 10) / 10;
+function sendState(){
+  netSend({ t: 's',
+    k: game.tanks.map(t => [r1(t.angle), t.hp, t.ammo, r1(t.barrier), r1(t.x), r1(t.alt), r1(t.flyT), t.bombs, t.streak]),
+    s: game.shells.map(s => [s.id, r1(s.x), r1(s.y), s.bomb ? 1 : 0]) });
+}
+function onNet(d){
+  if (!d || !d.t) return;
+  if (d.t === 'full') { lobbyStatus('その部屋はすでに対戦中です', true); netClose(); return; }
+  if (d.t === 'bye') { onDisconnected(); return; }
+  if (d.t === 'rematch') {
+    net.peerReady = true;
+    if ($('ovResult').classList.contains('show'))
+      $('resStatus').textContent = net.myReady ? '開始します…' : '相手が再対戦を希望しています！';
+    if (isHost()) tryRematch();
+    return;
+  }
+  if (d.t === 'start') { net.myReady = net.peerReady = false; startGame({ mode: 'online', role: 'guest', seed: d.seed }); return; }
+  if (!game || game.mode !== 'online') return;
+  if (isHost()) {
+    const t = game.tanks[1];
+    if (d.t === 'load' && game.phase === 'play' && !t.dead) gainCorrect(1);
+    else if (d.t === 'miss') gainMiss(1);
+    else if (d.t === 'cmd') doCommand(1, d.c);
+    return;
+  }
+  // ゲスト側
+  switch (d.t) {
+    case 's': {
+      d.k.forEach((k, i) => { const t = game.tanks[i];
+        [t.angle, t.hp, t.ammo, t.barrier, t.x, t.alt, t.flyT, t.bombs, t.streak] = k; });
+      const prev = new Map(game.shells.map(s => [s.id, s]));
+      game.shells = d.s.map(([id, x, y, b]) => {
+        const o = prev.get(id), trail = o ? o.trail : [];
+        if (o) { trail.push({ x: o.x, y: o.y }); if (trail.length > 8) trail.shift(); }
+        return { id, x, y, bomb: !!b, trail };
+      });
+      break;
+    }
+    case 'ex': applyExplosionFx(d); break;
+    case 'fire': fireFx(d.side, !!d.b); break;
+    case 'fly': sfx.fly(); break;
+    case 'bar': sfx.barrier(); break;
+    case 'over': endGame(d.w); break;
+  }
+}
+
+// 起動
+goTitle();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
