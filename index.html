@@ -87,7 +87,7 @@ code,kbd{background:#0b1020;border:1px solid var(--line);border-radius:5px;paddi
           <li>表示された英単語を入力して <kbd>Enter</kbd> → 正解で砲弾を1発装填（最大5発）</li>
           <li>5連続正解で <b>榴弾</b> を1発獲得（最大3発）。榴弾は地形を破壊でき、戦車には2倍のダメージ</li>
           <li><code>up</code> / <code>down</code> … 砲塔の角度を上げる / 下げる（3°ずつ）</li>
-          <li><code>forward</code> / <code>back</code> … 戦車を前進 / 後退（戦車5台分）</li>
+          <li><code>forward</code> / <code>back</code> … 戦車を前進 / 後退（戦車2.5台分）</li>
           <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
           <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）</li>
           <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
@@ -144,7 +144,7 @@ const DMG_R = 40, CARVE_R = 18, BOMB_CARVE_R = 30, CRATER_R = 55;
 const BAR_R = 58, BAR_PER_SHELL = 3;
 const MAX_AMMO = 5, MAX_BOMBS = 3, STREAK_FOR_BOMB = 5;
 const ANG_STEP = 3, ANG_MIN = 5, ANG_MAX = 80, BARREL = 32;
-const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 5, MOVE_SPEED = 260;   // forward/back で戦車5台分
+const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 2.5, MOVE_SPEED = 260; // forward/back で戦車2.5台分
 const X_MIN = 50, X_MAX = W / 2 - 160;                             // 自陣内のみ移動可
 const FLY_H = H / 4, FLY_T = 3, FLY_SPEED = 380;                   // fly: 画面1/4上昇・3秒
 const PREVIEW_T = 0.6;                  // 予測軌道を表示する時間(秒)
