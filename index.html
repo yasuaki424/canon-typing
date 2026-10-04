@@ -78,6 +78,13 @@ code,kbd{background:#0b1020;border:1px solid var(--line);border-radius:5px;paddi
         <button class="lv" data-lv="4">英検4級</button>
       </div>
       <div class="row">
+        <span class="label">難易度</span>
+        <button class="df" data-df="baby">👶 baby</button>
+        <button class="df sel" data-df="normal">normal</button>
+        <button class="df" data-df="hell">😈 hell</button>
+      </div>
+      <p class="sub" id="dfDesc"></p>
+      <div class="row">
         <button class="primary" id="btnCpu">🤖 CPUと対戦</button>
         <button class="primary" id="btnOnline">🌐 オンライン対戦</button>
       </div>
@@ -149,7 +156,13 @@ const X_MIN = 50, X_MAX = W / 2 - 160;                             // 自陣内�
 const FLY_H = H / 4, FLY_T = 3, FLY_SPEED = 380;                   // fly: 画面1/4上昇・3秒
 const PREVIEW_T = 0.6;                  // 予測軌道を表示する時間(秒)
 const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire'];
-const PEER_PREFIX = 'canon-typing-v2-';
+const PEER_PREFIX = 'canon-typing-v3-';
+const DIFFS = {
+  baby:   { label: 'BABY', desc: '👶 baby：単語の最初の3文字だけ入力すればOK。正解するとその場で砲弾1発を自動発射。バリアは弾なしでいつでも3秒' },
+  normal: { label: '',     desc: 'normal：単語を入力して砲弾を装填（最大5発）。fire でまとめて発射' },
+  hell:   { label: 'HELL', desc: '😈 hell：同じ単語を3回入力して1発装填。耐久力は半分からスタート。そのかわり攻撃力2倍' },
+};
+const HELL_REPEAT = 3, BABY_CHARS = 3;
 
 // ====================================================================
 //  単語リスト  英語|漢字|ひらがな（ひらがな省略時はカタカナ語）
@@ -525,9 +538,10 @@ function crater(x, y, r){   // 榴弾による地形破壊
     if (h[i] < bottom) h[i] = Math.min(H - 12, bottom);
   }
 }
-function mkTank(side){
+function mkTank(side, diff){
   const x = side ? W - START_X : START_X;
-  return { side, x, tx: x, y: terrainAt(x), alt: 0, flyT: 0, dir: side ? -1 : 1, angle: 30, hp: HP_MAX,
+  return { side, diff, x, tx: x, y: terrainAt(x), alt: 0, flyT: 0, dir: side ? -1 : 1, angle: 30,
+           hp: diff === 'hell' ? HP_MAX / 2 : HP_MAX,
            ammo: 0, bombs: 0, streak: 0, barrier: 0, flash: 0, recoil: 0, dead: false, rotor: 0 };
 }
 function mkWall(side){
@@ -560,18 +574,19 @@ function moveLimits(side){ return side === 0 ? [X_MIN, X_MAX] : [W - X_MAX, W - 
 //  ゲーム状態
 // ====================================================================
 let game = null;
-let level = '5';
-const typing = { word: null, input: '', start: 0, recent: [], times: [] };
+let level = '5', difficulty = 'normal';
+const typing = { word: null, input: '', start: 0, recent: [], times: [], rep: 0 };
 const cpu = { timer: 0, threshold: 1, shots: 0, aiming: false, target: 0, useBomb: false, loads: 0 };
 
-function startGame({ mode, role = null, seed }){
+function startGame({ mode, role = null, seed, diffs }){
+  if (!diffs) diffs = [difficulty, 'normal'];   // CPU戦：自分=選択した難易度、CPU=normal
   if (seed == null) seed = (Math.random() * 1e9) | 0;
   const ter = genTerrain(seed);
   game = { mode, role, seed, terrain: ter.h, flat: ter.flat, clouds: ter.clouds,
            tanks: [], walls: [], shells: [], parts: [], floats: [],
            phase: mode === 'demo' ? 'demo' : 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0,
            winner: -1, mySide: role === 'guest' ? 1 : 0 };
-  game.tanks = [mkTank(0), mkTank(1)];
+  game.tanks = [mkTank(0, diffs[0]), mkTank(1, diffs[1])];
   game.walls = [mkWall(0), mkWall(1)];
   if (mode === 'demo') return;
   Object.assign(cpu, { timer: 0, threshold: 1 + Math.floor(Math.random() * 5), shots: 0, aiming: false, useBomb: false, loads: 0 });
@@ -587,14 +602,15 @@ const isGuest = () => game && game.mode === 'online' && game.role === 'guest';
 const isAuth = () => game && (game.mode === 'cpu' || isHost());
 
 function names(){
-  if (game.mode === 'cpu') return ['YOU', 'CPU'];
-  return game.mySide === 0 ? ['YOU', 'RIVAL'] : ['RIVAL', 'YOU'];
+  const n = game.mode === 'cpu' ? ['YOU', 'CPU'] : game.mySide === 0 ? ['YOU', 'RIVAL'] : ['RIVAL', 'YOU'];
+  return n.map((s, i) => { const l = DIFFS[game.tanks[i].diff].label; return l ? `${s} [${l}]` : s; });
 }
 
 // ---------- アクション（権威側で実行） ----------
 function gainCorrect(side){   // 正解：砲弾装填＋連続正解カウント
   const t = game.tanks[side]; let loaded = false, bomb = false;
-  if (t.ammo < MAX_AMMO) { t.ammo++; loaded = true; }
+  if (t.diff === 'baby') { if (!t.dead) fireShots(side, 1); }   // baby：正解した瞬間に1発発射
+  else if (t.ammo < MAX_AMMO) { t.ammo++; loaded = true; }
   t.streak++;
   if (t.streak >= STREAK_FOR_BOMB) { t.streak = 0; if (t.bombs < MAX_BOMBS) { t.bombs++; bomb = true; } }
   return { loaded, bomb };
@@ -642,6 +658,12 @@ function doCommand(side, c){
       if (t.ammo <= 0) return 'empty';
       fireShots(side, t.ammo); t.ammo = 0; return 'ok';
     case 'barrier':
+      if (t.diff === 'baby') {   // baby：弾数に関係なく3秒（重ねがけ不可）
+        if (t.barrier > 0) return 'active';
+        t.barrier = BAR_PER_SHELL; sfx.barrier();
+        if (isHost()) netSend({ t: 'bar', side });
+        return 'ok';
+      }
       if (t.ammo <= 0) return 'empty';
       t.barrier += t.ammo * BAR_PER_SHELL; t.ammo = 0; sfx.barrier();
       if (isHost()) netSend({ t: 'bar', side });
@@ -692,7 +714,7 @@ function updateTanks(dt){
 function explodeAt(x, y, owner, kind, bomb = false){
   const e = 1 - owner, et = game.tanks[e];
   let w = -1, hitSide = -1, died = -1;
-  const dmg = bomb ? BOMB_DMG : DMG;
+  const dmg = (bomb ? BOMB_DMG : DMG) * (game.tanks[owner].diff === 'hell' ? 2 : 1);   // hell は攻撃力2倍
   if (kind === 'hit') {
     if (bomb) crater(x, y, CRATER_R);
     if (carve(game.walls[e], x, y, bomb ? BOMB_CARVE_R : CARVE_R) > 0) w = e;
@@ -818,8 +840,11 @@ function nextWord(){
   const list = WORDS[level]; let w;
   do { w = list[Math.floor(Math.random() * list.length)]; } while (typing.recent.includes(w.en) && list.length > 12);
   typing.recent.push(w.en); if (typing.recent.length > 10) typing.recent.shift();
-  typing.word = w; typing.input = ''; typing.start = performance.now();
+  typing.word = w; typing.input = ''; typing.start = performance.now(); typing.rep = 0;
 }
+const myDiff = () => game.tanks[game.mySide].diff;
+// baby は最初の3文字が正解（短い単語は全体）
+const answerOf = w => myDiff() === 'baby' ? w.en.toLowerCase().slice(0, BABY_CHARS) : w.en.toLowerCase();
 let msgTimer = 0;
 function setMsg(text, cls = ''){
   const m = $('msg'); m.textContent = text; m.className = cls;
@@ -827,10 +852,13 @@ function setMsg(text, cls = ''){
 }
 function renderPanel(){
   if (!game || game.mode === 'demo') return;
-  const w = typing.word, inp = typing.input, lw = w.en.toLowerCase();
+  const w = typing.word, inp = typing.input, lw = w.en.toLowerCase(), d = myDiff();
   let m = 0; while (m < inp.length && m < lw.length && inp[m] === lw[m]) m++;
-  $('en').innerHTML = `<span class="hit">${esc(w.en.slice(0, m))}</span>${esc(w.en.slice(m))}`;
-  $('jp').textContent = w.jp;
+  if (d === 'baby') {   // 入力が必要な3文字を強調、残りは薄く
+    const k = Math.min(BABY_CHARS, w.en.length), mm = Math.min(m, k);
+    $('en').innerHTML = `<span class="hit">${esc(w.en.slice(0, mm))}</span><u>${esc(w.en.slice(mm, k))}</u><span style="opacity:.35">${esc(w.en.slice(k))}</span>`;
+  } else $('en').innerHTML = `<span class="hit">${esc(w.en.slice(0, m))}</span>${esc(w.en.slice(m))}`;
+  $('jp').textContent = w.jp + (d === 'hell' ? `　【${typing.rep}/${HELL_REPEAT}回】` : '');
   const ty = $('typed'); ty.textContent = inp;
   ty.className = !inp ? '' : lw.startsWith(inp) ? 'good' : COMMANDS.some(c => c.startsWith(inp)) ? 'cmd' : 'bad';
 }
@@ -838,22 +866,36 @@ function submit(){
   const s = typing.input.trim().toLowerCase(); typing.input = '';
   if (!s) return renderPanel();
   const me = game.tanks[game.mySide];
-  if (s === typing.word.en.toLowerCase()) {
+  const d = me.diff;
+  if (s === answerOf(typing.word) || s === typing.word.en.toLowerCase()) {
+    if (d === 'hell' && ++typing.rep < HELL_REPEAT) {   // hell：同じ単語を3回
+      tone(660 + typing.rep * 220, .08, 'triangle', .18);
+      setMsg(`OK！ あと${HELL_REPEAT - typing.rep}回`, 'good');
+      return renderPanel();
+    }
     typing.times.push((performance.now() - typing.start) / 1000);
     if (typing.times.length > 6) typing.times.shift();
-    if (isGuest()) netSend({ t: 'load' });
-    const r = gainCorrect(game.mySide);   // ゲストは見た目用に先行反映（ホストの状態で上書きされる）
+    let r;
+    if (isGuest()) {
+      netSend({ t: 'load' });
+      // 見た目用の先行反映（ホストの状態で上書きされる）。baby の発射はホスト側で行う
+      if (d === 'baby') { me.streak++; r = { bomb: false }; if (me.streak >= STREAK_FOR_BOMB) { me.streak = 0; if (me.bombs < MAX_BOMBS) { me.bombs++; r.bomb = true; } } }
+      else r = gainCorrect(game.mySide);
+    } else r = gainCorrect(game.mySide);
     if (r.bomb) { sfx.bombGet(); setMsg(`${STREAK_FOR_BOMB}連続正解！ 榴弾を獲得（${me.bombs}/${MAX_BOMBS}）— bomb で発射`, 'info'); }
     else {
       sfx.correct();
       const st = me.streak ? `　連続 ${me.streak}/${STREAK_FOR_BOMB}` : '';
-      setMsg(r.loaded ? `正解！ 砲弾を装填（${me.ammo}/${MAX_AMMO}）${st}` : `正解！ 装填は満タンです${st}`, r.loaded ? 'good' : 'info');
+      if (d === 'baby') setMsg(`正解！ 発射！${st}`, 'good');
+      else setMsg(r.loaded ? `正解！ 砲弾を装填（${me.ammo}/${MAX_AMMO}）${st}` : `正解！ 装填は満タンです${st}`, r.loaded ? 'good' : 'info');
     }
     nextWord();
   } else if (COMMANDS.includes(s)) {
     const c = s === 'barrire' ? 'barrier' : s;
     let err = null;
-    if ((c === 'fire' || c === 'barrier') && me.ammo <= 0) err = '砲弾が装填されていません';
+    if (d === 'baby' && c === 'fire') err = 'baby mode では正解すると自動で発射されます';
+    else if (d === 'baby' && c === 'barrier' && me.barrier > 0) err = 'バリアはすでに展開中です';
+    else if ((c === 'fire' || (c === 'barrier' && d !== 'baby')) && me.ammo <= 0) err = '砲弾が装填されていません';
     else if (c === 'bomb' && me.bombs <= 0) err = `榴弾がありません（${STREAK_FOR_BOMB}連続正解で獲得）`;
     else if (c === 'fly' && me.flyT > 0) err = 'すでに飛行中です';
     else if (me.dead) err = '';
@@ -867,14 +909,15 @@ function submit(){
         if (c === 'up' || c === 'down') sfx.cmd();
         if (c === 'forward' || c === 'back') sfx.move();
         const label = { up: '砲塔 ▲', down: '砲塔 ▼', forward: '前進 ▶', back: '◀ 後退', fly: 'ヘリコプターで上昇！',
-          fire: `発射！ ×${n}`, bomb: '榴弾発射！', barrier: `バリア展開！ ${n * BAR_PER_SHELL}秒` }[c];
+          fire: `発射！ ×${n}`, bomb: '榴弾発射！', barrier: `バリア展開！ ${(d === 'baby' ? 1 : n) * BAR_PER_SHELL}秒` }[c];
         setMsg(label, 'cmd');
       }
     }
   } else {
     if (isGuest()) netSend({ t: 'miss' });
     gainMiss(game.mySide);
-    sfx.wrong(); setMsg(`ミス！「${s}」　連続正解リセット`, 'bad');
+    const repLost = typing.rep > 0; typing.rep = 0;
+    sfx.wrong(); setMsg(`ミス！「${s}」　連続正解リセット${repLost ? '（3回入力もやり直し）' : ''}`, 'bad');
     const p = $('inputLine'); p.classList.remove('shakeX'); void p.offsetWidth; p.classList.add('shakeX');
   }
   renderPanel();
@@ -1127,7 +1170,7 @@ function drawHudPanel(t, name, side, now){
   const badges = [];
   if (t.barrier > 0) badges.push(['#67e8f9', `BARRIER ${t.barrier.toFixed(1)}s`]);
   if (t.flyT > 0) badges.push(['#fde68a', `FLY ${t.flyT.toFixed(1)}s`]);
-  let bx0 = 74; ctx.font = 'bold 12px "Segoe UI",sans-serif';
+  let bx0 = Math.max(74, 24 + ctx.measureText(name).width); ctx.font = 'bold 12px "Segoe UI",sans-serif';
   for (const [c, s] of badges) { ctx.fillStyle = c; ctx.fillText(s, bx0, 23); bx0 += ctx.measureText(s).width + 10; }
   ctx.fillStyle = '#cbd5f0'; ctx.font = '14px "Segoe UI","Meiryo",sans-serif';
   ctx.fillText(`角度 ${Math.round(t.angle)}°`, PW - 80, 24);
@@ -1199,6 +1242,11 @@ function showResult(){
 document.querySelectorAll('.lv').forEach(b => b.onclick = () => {
   level = b.dataset.lv; document.querySelectorAll('.lv').forEach(x => x.classList.toggle('sel', x === b));
 });
+document.querySelectorAll('.df').forEach(b => b.onclick = () => {
+  difficulty = b.dataset.df; document.querySelectorAll('.df').forEach(x => x.classList.toggle('sel', x === b));
+  $('dfDesc').textContent = DIFFS[difficulty].desc;
+});
+$('dfDesc').textContent = DIFFS[difficulty].desc;
 $('btnCpu').onclick = () => { audioInit(); startGame({ mode: 'cpu' }); };
 $('btnOnline').onclick = () => { audioInit(); $('roomCode').textContent = ''; lobbyStatus(''); show('ovLobby'); };
 $('btnLobbyBack').onclick = () => goTitle();
@@ -1263,7 +1311,7 @@ async function hostRoom(){
   peer.on('connection', c => {
     if (net.conn) { c.on('open', () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); }); return; }
     net.conn = c; bindConn(c);
-    c.on('open', () => { lobbyStatus('相手が参加しました！'); hostStart(); });
+    c.on('open', () => lobbyStatus('相手が参加しました！'));
   });
   peer.on('error', e => {
     if (e.type === 'unavailable-id') hostRoom();
@@ -1280,7 +1328,7 @@ async function joinRoom(raw){
   peer.on('open', () => {
     const c = peer.connect(PEER_PREFIX + code, { reliable: true });
     net.conn = c; bindConn(c);
-    c.on('open', () => lobbyStatus('接続しました！まもなく開始します…'));
+    c.on('open', () => { lobbyStatus('接続しました！まもなく開始します…'); c.send({ t: 'hello', diff: difficulty }); });
   });
   peer.on('error', e => {
     lobbyStatus(e.type === 'peer-unavailable' ? '部屋が見つかりません。コードを確認してください。' : '通信エラー: ' + e.type, true);
@@ -1289,8 +1337,9 @@ async function joinRoom(raw){
 function hostStart(){
   net.myReady = net.peerReady = false;
   const seed = (Math.random() * 1e9) | 0;
-  netSend({ t: 'start', seed });
-  startGame({ mode: 'online', role: 'host', seed });
+  const diffs = [difficulty, net.peerDiff || 'normal'];
+  netSend({ t: 'start', seed, diffs });
+  startGame({ mode: 'online', role: 'host', seed, diffs });
 }
 function tryRematch(){ if (net.myReady && net.peerReady) hostStart(); }
 const r1 = v => Math.round(v * 10) / 10;
@@ -1310,7 +1359,8 @@ function onNet(d){
     if (isHost()) tryRematch();
     return;
   }
-  if (d.t === 'start') { net.myReady = net.peerReady = false; startGame({ mode: 'online', role: 'guest', seed: d.seed }); return; }
+  if (d.t === 'hello') { if (DIFFS[d.diff]) net.peerDiff = d.diff; if (!game || game.mode !== 'online') hostStart(); return; }
+  if (d.t === 'start') { net.myReady = net.peerReady = false; startGame({ mode: 'online', role: 'guest', seed: d.seed, diffs: d.diffs }); return; }
   if (!game || game.mode !== 'online') return;
   if (isHost()) {
     const t = game.tanks[1];
