@@ -218,6 +218,14 @@ const BOSS_SC = 1 / 3, BOSS_V = 650;                    // 戦車は通常の1/3
 const FIRE_DMG = 5, FIRE_R = 22;                        // ドラゴンの炎20発で戦車が壊れる
 const DRAGON_HP_PER = 50, BARRAGE_EVERY = 10, BARRAGE_N = 20;
 const LASER_P = .25, LASER_CHARGE = .8, LASER_LIFE = .6, LASER_W = 14;   // ブレス：反撃の25%で発生、0.8秒ためて0.6秒照射
+const SWEEP_LIFE = 1.3;                                                    // なぎ払い：1.3秒かけて射線が上から下へ動く
+// 怒り段階（HP 66%・33% で上昇）ごとの自発攻撃の間隔倍率と、技の出やすさ（重み）
+const RAGE_MULT = [1, .7, .45];
+const RAGE_MOVES = [
+  { single: 35, triple: 25, laser: 25, aimed: 15 },
+  { single: 20, triple: 20, fan: 20, laser: 20, aimed: 20 },
+  { triple: 15, fan: 20, laser: 20, aimed: 20, sweep: 25 },
+];
 const PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#06b6d4', '#f97316'];
 const DR_BODY = { y: -80, rx: 115, ry: 70 };
 const DR_HEADS = [[-150, -225], [-62, -278], [62, -278], [150, -225]];
@@ -1931,7 +1939,7 @@ function startBoss({ role, seed, roster, you }){
   game = { mode: 'boss', role, seed, terrain: h, flat: ter.flat, clouds: ter.clouds,
            tanks: [], walls: [], shells: [], fires: [], fireQueue: [], lasers: [], parts: [], floats: [],
            phase: 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0, mySide: you, rank: null,
-           dragon: { x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: [0, 0, 0, 0], dead: false, deadT: 0, sndT: 0 } };
+           dragon: { x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: [0, 0, 0, 0], dead: false, deadT: 0, sndT: 0, atkT: 5, stage: 0 } };
   // 偶数番目は左側、奇数番目は右側に並べる（ドラゴンをまたいでは移動できない）
   const sides = [[], []]; roster.forEach((_, i) => sides[i % 2].push(i));
   const lo = 40, hi = c - 230;
@@ -1978,15 +1986,27 @@ function bossUpdate(dt){
   for (const L of game.lasers) {
     if (L.charge > 0) {
       L.charge -= dt; d.glow[L.h] = Math.max(d.glow[L.h], .2);
-      if (L.charge <= 0) { sfx.laser(); game.shake = Math.max(game.shake, 6); if (isAuth()) laserDamage(L); }
+      if (L.charge <= 0) { sfx.laser(); game.shake = Math.max(game.shake, 6); }
     } else {
       L.life -= dt;
+      // 射線を更新（なぎ払いは角度が動く）。ダメージは権威側で毎フレーム判定（1本につき1回まで）
+      Object.assign(L, laserPath(L.h, L.a + (L.a2 - L.a) * clamp(1 - L.life / L.dur, 0, 1)));
+      d.glow[L.h] = Math.max(d.glow[L.h], .15);
+      if (isAuth()) laserDamage(L);
       game.parts.push({ x: L.x1 + rnd(-6, 6), y: L.y1 + rnd(-6, 2), vx: rnd(-120, 120), vy: rnd(-160, -20),
         life: rnd(.2, .45), max: .45, size: rnd(2, 5), color: ['#fff7ae', '#ffb703', '#ff5400'][Math.floor(Math.random() * 3)], g: 400 });
     }
   }
   game.lasers = game.lasers.filter(L => L.life > 0);
+  if (d.stage === 2 && !d.dead && Math.random() < dt * 8) {   // 激怒中は口から煙
+    const m = mouthPos(Math.floor(Math.random() * 4));
+    game.parts.push({ x: m.x, y: m.y, vx: rnd(-15, 15), vy: rnd(-50, -25), life: rnd(.8, 1.4), max: 1.4, size: rnd(6, 12), color: '#4b5563', g: -10, smoke: true });
+  }
   if (!isAuth()) return;
+  if (game.phase === 'play' && !d.dead) {   // 撃たれなくても自分から攻撃してくる
+    d.atkT -= dt;
+    if (d.atkT <= 0) { dragonMove(pickMove()); d.atkT = rnd(4, 7) * RAGE_MULT[d.stage]; }
+  }
   for (const q of game.fireQueue) { q.delay -= dt; if (q.delay <= 0) launchFire(q.tx); }
   game.fireQueue = game.fireQueue.filter(q => q.delay > 0);
   bossSimShells(dt);
@@ -2017,7 +2037,10 @@ function shellHitsDragon(s){
   const units = s.bomb ? 2 : 1, dm = units * (t.diff === 'hell' ? 2 : 1);   // 榴弾は2発分、hell は攻撃力2倍
   d.hp = Math.max(0, d.hp - dm); t.hits += units;
   bossEvent({ t: 'bex', k: 'dragon', x: s.x, y: s.y, b: s.bomb ? 1 : 0, o: s.owner, dm });
-  if (d.hp <= 0) bossEnd(); else dragonAttack();
+  if (d.hp <= 0) { bossEnd(); return; }
+  const r = d.hp / d.max, st = r <= 1 / 3 ? 2 : r <= 2 / 3 ? 1 : 0;
+  if (st > d.stage) { d.stage = st; bossEvent({ t: 'bex', k: 'rage', s: st, x: d.x, y: d.gy - 330 }); d.atkT = Math.min(d.atkT, 1.2); }
+  dragonAttack();
 }
 function dragonAttack(){   // 攻撃を受けるたびに反撃。10回に1度は全周囲ブレス
   const d = game.dragon; d.hitN++;
@@ -2030,13 +2053,52 @@ function dragonAttack(){   // 攻撃を受けるたびに反撃。10回に1度�
     bossEvent({ t: 'bex', k: 'roar', x: d.x, y: d.gy - 320 });
   } else if (Math.random() < LASER_P && startLaser()) {
     // ブレス（直線レーザー）
-  } else launchFire(Math.random() < .5 ? rnd(30, d.x - 190) : rnd(d.x + 190, W - 30));
+  } else launchFire(randomTx());
 }
-function startLaser(){
+const randomTx = () => { const d = game.dragon; return Math.random() < .5 ? rnd(30, d.x - 190) : rnd(d.x + 190, W - 30); };
+function pickMove(){
+  const w = RAGE_MOVES[game.dragon.stage];
+  let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0);
+  for (const k in w) if ((r -= w[k]) < 0) return k;
+  return 'single';
+}
+function hateTarget(){   // 当てた数が多い人ほど狙われやすい（6割はトップを狙う）
+  const alive = game.tanks.filter(t => !t.dead);
+  if (!alive.length) return null;
+  alive.sort((a, b) => b.hits - a.hits);
+  return alive[0].hits > 0 && Math.random() < .6 ? alive[0] : alive[Math.floor(Math.random() * alive.length)];
+}
+function say(text){ const d = game.dragon; bossEvent({ t: 'bex', k: 'say', text, x: d.x, y: d.gy - 330 }); }
+function dragonMove(kind){   // 自発攻撃の技
+  const d = game.dragon, side = () => Math.random() < .5;
+  switch (kind) {
+    case 'single': launchFire(randomTx()); break;
+    case 'triple': {
+      const tx = randomTx();
+      for (let i = 0; i < 3; i++) game.fireQueue.push({ delay: i * .18, tx: clamp(tx + (i - 1) * 45, 20, W - 20) });
+      say('3連射！'); break;
+    }
+    case 'fan': {
+      const left = side(), lo = left ? 30 : d.x + 190, hi = left ? d.x - 190 : W - 30;
+      for (let i = 0; i < 5; i++) game.fireQueue.push({ delay: i * .08, tx: lo + (hi - lo) * (i + .5) / 5 });
+      say('扇状ブレス！'); break;
+    }
+    case 'aimed': {
+      const t = hateTarget(); if (!t) { launchFire(randomTx()); break; }
+      for (let i = 0; i < 2; i++) game.fireQueue.push({ delay: i * .35, tx: clamp(t.x + rnd(-25, 25), 20, W - 20) });
+      say(`🎯 ${t.name} を狙っている！`); break;
+    }
+    case 'laser': if (!startLaser()) launchFire(randomTx()); break;
+    case 'sweep': if (startLaser(true)) say('なぎ払い！'); else launchFire(randomTx()); break;
+  }
+}
+function startLaser(sweep = false){
   const free = [0, 1, 2, 3].filter(h => !game.lasers.some(L => L.h === h));
   if (!free.length) return false;
   const h = free[Math.floor(Math.random() * free.length)];
-  bossEvent({ t: 'bex', k: 'laser', h, a: rnd(6, 30) });   // 水平から下向きに6〜30°
+  // 通常：水平から下向きに6〜30°で固定。なぎ払い：ほぼ水平から急角度まで動かす
+  const a = sweep ? rnd(-6, 2) : rnd(6, 30), a2 = sweep ? rnd(38, 52) : a;
+  bossEvent({ t: 'bex', k: 'laser', h, a, a2, dur: sweep ? SWEEP_LIFE : LASER_LIFE });
   return true;
 }
 function laserPath(h, a){   // 口から直線に進み、地面か画面端で止まる
@@ -2061,11 +2123,11 @@ function damageTank(i){   // 炎・ブレス共通。やられたら3秒後に�
 function laserDamage(L){
   const ds = [], died = [], blk = [];
   game.tanks.forEach((t, i) => {
-    if (t.dead) return;
-    if (t.barrier > 0 && segDist(t.x, t.y - 16 * t.sc, L) < BAR_R * t.sc + LASER_W / 2) { blk.push(i); return; }
-    if (segDist(t.x, t.y - 6, L) < 10 + LASER_W / 2) { ds.push(i); if (damageTank(i)) died.push(i); }
+    if (t.dead || L.hit.includes(i)) return;
+    if (t.barrier > 0 && segDist(t.x, t.y - 16 * t.sc, L) < BAR_R * t.sc + LASER_W / 2) { blk.push(i); L.hit.push(i); return; }
+    if (segDist(t.x, t.y - 6, L) < 10 + LASER_W / 2) { ds.push(i); L.hit.push(i); if (damageTank(i)) died.push(i); }
   });
-  bossEvent({ t: 'bex', k: 'lhit', ds, died, blk });
+  if (ds.length || blk.length) bossEvent({ t: 'bex', k: 'lhit', ds, died, blk });
 }
 function launchFire(tx){
   const d = game.dragon, hi = tx < d.x ? Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
@@ -2159,10 +2221,21 @@ function applyBossFx(ev){
       }
       break;
     case 'laser': {
-      const L = Object.assign({ h: ev.h, charge: LASER_CHARGE, life: LASER_LIFE }, laserPath(ev.h, ev.a));
+      const a2 = ev.a2 == null ? ev.a : ev.a2, dur = ev.dur || LASER_LIFE;
+      const L = Object.assign({ h: ev.h, a: ev.a, a2, dur, charge: LASER_CHARGE, life: dur, hit: [] }, laserPath(ev.h, ev.a));
+      if (a2 !== ev.a) L.end = laserPath(ev.h, a2);
       game.lasers.push(L); sfx.charge();
       break;
     }
+    case 'say': addFloat(ev.text, x, y, '#fdba74'); break;
+    case 'rage':
+      d.stage = ev.s; sfx.roar(); game.shake = 18;
+      addFloat(ev.s === 2 ? '🔥 ドラゴンが激怒した！' : '😡 ドラゴンが怒った！', x, y - 30, ev.s === 2 ? '#ef4444' : '#fb923c');
+      setMsg(ev.s === 2 ? 'ドラゴンが激怒！ 攻撃がさらに激しくなる！' : 'ドラゴンが怒った！ 攻撃が激しくなる！', 'bad');
+      for (let i = 0; i < 4; i++) { const m = mouthPos(i);
+        for (let k = 0; k < 10; k++) game.parts.push({ x: m.x, y: m.y, vx: rnd(-40, 40), vy: rnd(-90, -30), life: rnd(.8, 1.5), max: 1.5,
+          size: rnd(8, 16), color: '#4b5563', g: -10, smoke: true }); }
+      break;
     case 'lhit':
       for (const i of ev.blk) {
         const t = game.tanks[i]; sfx.block();
@@ -2240,7 +2313,11 @@ function drawDragonHead(x, y, f, glow, now, i){
   ctx.fillStyle = '#7f1d1d'; ctx.beginPath(); ctx.ellipse(32, 13 + open / 2, 16, open, .15, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#fff';
   for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(22 + k * 8, 12); ctx.lineTo(25 + k * 8, 17); ctx.lineTo(28 + k * 8, 12); ctx.fill(); }
-  ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.ellipse(6, -6, 6.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+  const st = game.dragon.stage;
+  ctx.save();
+  if (st > 0) { ctx.shadowColor = st === 2 ? '#ef4444' : '#fb923c'; ctx.shadowBlur = 10 + st * 6; }
+  ctx.fillStyle = ['#fde047', '#fb923c', '#ef4444'][st]; ctx.beginPath(); ctx.ellipse(6, -6, 6.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
   ctx.fillStyle = '#7f1d1d'; ctx.fillRect(5, -10, 2.5, 8);
   if (glow > 0) {
     const gg = ctx.createRadialGradient(46, 12, 0, 46, 12, 34);
@@ -2256,12 +2333,18 @@ function drawLasers(now){
       const k = clamp(1 - L.charge / LASER_CHARGE, 0, 1);
       ctx.setLineDash([14, 10]); ctx.lineDashOffset = -now * 120;
       ctx.strokeStyle = `rgba(255,80,40,${.35 + .4 * k * (Math.sin(now * 30) * .5 + .5)})`; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
+      if (L.end) {   // なぎ払いは終わりの射線と範囲も予告
+        ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.end.x1, L.end.y1); ctx.stroke();
+        ctx.setLineDash([]); ctx.fillStyle = `rgba(255,80,40,${.08 + .1 * k})`;
+        ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.lineTo(L.end.x1, L.end.y1); ctx.closePath(); ctx.fill();
+      }
+      ctx.setLineDash([]);
       const g = ctx.createRadialGradient(L.x0, L.y0, 0, L.x0, L.y0, 10 + 26 * k);
       g.addColorStop(0, 'rgba(255,255,230,.95)'); g.addColorStop(.5, 'rgba(255,150,40,.7)'); g.addColorStop(1, 'rgba(255,60,0,0)');
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(L.x0, L.y0, 10 + 26 * k, 0, Math.PI * 2); ctx.fill();
     } else {   // 照射
-      const k = clamp(L.life / LASER_LIFE, 0, 1), w = LASER_W * (0.6 + 0.4 * k) + Math.sin(now * 60) * 2;
+      const k = clamp(L.dur === LASER_LIFE ? L.life / L.dur : Math.min(1, L.life / .4), 0, 1), w = LASER_W * (0.6 + 0.4 * k) + Math.sin(now * 60) * 2;
       ctx.shadowColor = '#ff5400'; ctx.shadowBlur = 30;
       ctx.strokeStyle = `rgba(255,90,20,${.75 * k + .2})`; ctx.lineWidth = w * 2;
       ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
@@ -2291,6 +2374,10 @@ function drawBossHUD(now){
   ctx.fillStyle = 'rgba(8,12,24,.6)'; rr(bx - 18, 10, bw + 36, 100, 14); ctx.fill();
   ctx.font = 'bold 26px "Segoe UI","Meiryo",sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fca5a5';
   ctx.fillText('🐉 DRAGON', bx, 40);
+  if (d.stage > 0) {
+    ctx.textAlign = 'center'; ctx.fillStyle = d.stage === 2 ? '#ef4444' : '#fb923c';
+    ctx.fillText(d.stage === 2 ? '🔥 激怒' : '😡 怒り', W / 2, 40); ctx.textAlign = 'left';
+  }
   ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.fillText(`${d.hp} / ${d.max}`, bx + bw, 40);
   ctx.fillStyle = '#111827'; rr(bx, 50, bw, 28, 8); ctx.fill();
   if (d.hp > 0) {
