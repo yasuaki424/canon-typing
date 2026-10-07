@@ -215,7 +215,9 @@ const HELL_REPEAT = 3, BABY_CHARS = 3;
 // ボスチャレンジ
 const BOSS_PREFIX = 'canon-typing-boss-v1-', BOSS_MAX = 8;
 const BOSS_SC = 1 / 3, BOSS_V = 650;                    // 戦車は通常の1/3サイズ。距離が近いので初速を下げる
-const FIRE_DMG = 5, FIRE_R = 22;                        // ドラゴンの炎20発で戦車が壊れる
+const FIRE_DMG = 5, FIRE_R = 22;
+const BOSS_HP_MULT = 2;                                 // ボス戦の戦車は耐久力2倍（炎40発で壊れる。hell は20発）
+const hpFull = t => t.sc ? HP_MAX * BOSS_HP_MULT : HP_MAX;   // ゲージ満タンの値
 const DRAGON_HP_PER = 50, BARRAGE_EVERY = 10, BARRAGE_N = 20;
 const LASER_P = .25, LASER_CHARGE = .8, LASER_LIFE = .6, LASER_W = 14;   // ブレス：反撃の25%で発生、0.8秒ためて0.6秒照射
 const SWEEP_LIFE = 1.3;                                                    // なぎ払い：1.3秒かけて射線が上から下へ動く
@@ -1652,7 +1654,7 @@ function drawTank(t, now){
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.strokeText(t.name, t.x, ly);
     ctx.fillStyle = t.ghost ? '#d1d5db' : t.color; ctx.fillText(t.name, t.x, ly);
     ctx.fillStyle = '#111827'; ctx.fillRect(t.x - w / 2, ly + 5, w, 5);
-    const r = t.hp / HP_MAX; ctx.fillStyle = r > .6 ? '#4ade80' : r > .3 ? '#facc15' : '#f87171';
+    const r = t.hp / hpFull(t); ctx.fillStyle = r > .6 ? '#4ade80' : r > .3 ? '#facc15' : '#f87171';
     ctx.fillRect(t.x - w / 2, ly + 5, w * r, 5);
     if (t.dead) { ctx.fillStyle = '#e5e7eb'; ctx.font = '13px "Segoe UI","Meiryo",sans-serif'; ctx.fillText('復活中…', t.x, ly + 24); }
     if (t.side === game.mySide) {
@@ -1698,7 +1700,7 @@ function drawHudPanel(t, name, side, now){
   ctx.fillStyle = '#cbd5f0'; ctx.font = '14px "Segoe UI","Meiryo",sans-serif';
   ctx.fillText(`角度 ${Math.round(t.angle)}°`, PW - 80, 24);
   // 耐久力ゲージ（10発分の目盛り）
-  const bx = 14, by = 34, bw = PW - 80, bh = 16, r = t.hp / HP_MAX;
+  const bx = 14, by = 34, bw = PW - 80, bh = 16, r = t.hp / hpFull(t);
   if (t.barrier > 0) {
     ctx.save(); ctx.shadowColor = '#67e8f9'; ctx.shadowBlur = 14 + Math.sin(now * 8) * 8;
     ctx.fillStyle = '#67e8f9'; rr(bx - 3, by - 3, bw + 6, bh + 6, 6); ctx.fill(); ctx.restore();
@@ -1712,7 +1714,7 @@ function drawHudPanel(t, name, side, now){
     sh.addColorStop(clamp(p + .15, 0, 1), 'rgba(255,255,255,0)');
     ctx.fillStyle = sh; rr(bx, by, bw * r, bh, 4); ctx.fill();
   }
-  const ticks = HP_MAX / (game.mode === 'boss' ? FIRE_DMG : DMG);
+  const ticks = game.mode === 'boss' ? 10 : HP_MAX / DMG;   // ボス戦は1目盛り＝炎4発
   ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
   for (let i = 1; i < ticks; i++) { ctx.beginPath(); ctx.moveTo(bx + bw * i / ticks, by); ctx.lineTo(bx + bw * i / ticks, by + bh); ctx.stroke(); }
   ctx.fillStyle = '#fff'; ctx.font = 'bold 14px "Segoe UI",sans-serif'; ctx.fillText(`${t.hp}`, bx + bw + 10, by + 13);
@@ -1956,6 +1958,7 @@ function startBoss({ role, seed, roster, you }){
     const lr = i % 2, k = sides[lr].indexOf(i), m = sides[lr].length;
     const x0 = spawnLo + (hi - spawnLo) * (k + 1) / (m + 1), x = lr ? W - x0 : x0;
     const t = mkTank(lr, pl.diff);
+    t.hp *= BOSS_HP_MULT;
     Object.assign(t, { side: i, x, tx: x, sc: BOSS_SC, v: BOSS_V, name: pl.name, color: pl.color, angle: 30,
                        maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: lr ? [W - hi, W - lo] : [lo, hi] });
     t.y = terrainAt(x);
