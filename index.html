@@ -114,7 +114,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
           <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
           <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）</li>
           <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
-          <li><b>ボスチャレンジ</b> … 1〜8人で協力して巨大ドラゴンを攻撃。当てた数でランキング</li>
+          <li><b>ボスチャレンジ</b> … 1〜8人で協力して巨大ドラゴンを攻撃。周りの触手がまっすぐな弾を防ぐので、山なりに撃とう。当てた数でランキング</li>
           <li>入力は <b>半角英数モード（IMEオフ）</b> で。すべて <kbd>Enter</kbd> で確定</li>
         </ul>
       </details>
@@ -230,6 +230,9 @@ const PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7', '#ec4899
 const DR_BODY = { y: -80, rx: 115, ry: 70 };
 const DR_HEADS = [[-150, -225], [-62, -278], [62, -278], [150, -225]];
 const DR_NECKS = [[-70, -115], [-28, -135], [28, -135], [70, -115]];
+// 触手の防御壁：ドラゴンの左右に3本ずつ。内側ほど高く、まっすぐな弾は通さない（山なりの弾だけが本体に届く）
+const TENT_X = [205, 228, 251], TENT_H = [320, 280, 240], TENT_HW = 12;
+const TENT_DMG = 14, TENT_BOMB_DMG = 36;   // 1発で14px、榴弾で36px縮む（戦車の防御壁より壊れにくい）
 
 // ====================================================================
 //  単語リスト  英語|漢字|ひらがな（ひらがな省略時はカタカナ語）
@@ -1510,7 +1513,7 @@ function draw(){
     }
   }
 
-  if (game.mode === 'boss') drawDragon(now);
+  if (game.mode === 'boss') { drawDragon(now); drawTentacles(now); }
   if (game.mode !== 'demo' && (game.phase === 'play' || game.phase === 'ready')) drawPreview(game.tanks[game.mySide]);
   for (const t of game.tanks) drawTank(t, now);
 
@@ -1941,11 +1944,17 @@ function startBoss({ role, seed, roster, you }){
            phase: 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0, mySide: you, rank: null,
            dragon: { x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: [0, 0, 0, 0], dead: false, deadT: 0, sndT: 0, atkT: 5, stage: 0 } };
   // 偶数番目は左側、奇数番目は右側に並べる（ドラゴンをまたいでは移動できない）
+  game.tents = [];
+  for (const sd of [-1, 1]) TENT_X.forEach((ox, j) => {
+    const x = c + sd * ox;
+    game.tents.push({ x, base: terrainAt(x), h: TENT_H[j], max: TENT_H[j], sd, ph: Math.random() * 6.28, flash: 0 });
+  });
   const sides = [[], []]; roster.forEach((_, i) => sides[i % 2].push(i));
-  const lo = 40, hi = c - 230;
+  // 移動できる範囲は 40〜(中心-330)。初期配置は山なりで本体を狙える 220〜(中心-330) に並べる
+  const lo = 40, hi = c - 330, spawnLo = 220;
   game.tanks = roster.map((pl, i) => {
     const lr = i % 2, k = sides[lr].indexOf(i), m = sides[lr].length;
-    const x0 = lo + (hi - lo) * (k + 1) / (m + 1), x = lr ? W - x0 : x0;
+    const x0 = spawnLo + (hi - spawnLo) * (k + 1) / (m + 1), x = lr ? W - x0 : x0;
     const t = mkTank(lr, pl.diff);
     Object.assign(t, { side: i, x, tx: x, sc: BOSS_SC, v: BOSS_V, name: pl.name, color: pl.color, angle: 30,
                        maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: lr ? [W - hi, W - lo] : [lo, hi] });
@@ -2024,12 +2033,27 @@ function bossSimShells(dt){
     const steps = Math.max(1, Math.ceil(Math.hypot(s.vx, s.vy) * dt / 3)), h = dt / steps;
     for (let k = 0; k < steps; k++) {
       s.vy += G * h; s.x += s.vx * h; s.y += s.vy * h;
+      const ti = tentHit(s.x, s.y);
+      if (ti >= 0) { s.dead = true; hitTent(ti, s); break; }
       if (dragonHit(s.x, s.y)) { s.dead = true; shellHitsDragon(s); break; }
       if (s.y >= terrainAt(s.x)) { s.dead = true; bossEvent({ t: 'bex', k: 'ground', x: s.x, y: s.y, b: s.bomb ? 1 : 0 }); break; }
       if (s.x < -150 || s.x > W + 150 || s.y > H + 50) { s.dead = true; break; }
     }
   }
   game.shells = game.shells.filter(s => !s.dead);
+}
+function tentHit(x, y){
+  for (let i = 0; i < game.tents.length; i++) {
+    const t = game.tents[i];
+    if (t.h > 0 && Math.abs(x - t.x) < TENT_HW && y > t.base - t.h && y < t.base + 4) return i;
+  }
+  return -1;
+}
+function hitTent(i, sh){
+  const t = game.tents[i];
+  t.h = Math.max(0, t.h - (sh.bomb ? TENT_BOMB_DMG : TENT_DMG));
+  if (t.h < 20) t.h = 0;
+  bossEvent({ t: 'bex', k: 'tent', i, h: t.h, x: sh.x, y: sh.y, b: sh.bomb ? 1 : 0 });
 }
 function shellHitsDragon(s){
   const d = game.dragon, t = game.tanks[s.owner];
@@ -2228,6 +2252,15 @@ function applyBossFx(ev){
       break;
     }
     case 'say': addFloat(ev.text, x, y, '#fdba74'); break;
+    case 'tent': {
+      const t = game.tents[ev.i]; t.h = ev.h; t.flash = .15;
+      sfx.boom(ev.b ? 1 : 0);
+      for (let k = 0; k < (ev.b ? 26 : 14); k++) { const a = rnd(0, Math.PI * 2), v = rnd(50, 200);
+        game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: rnd(.3, .7), max: .7, size: rnd(2, 5),
+          color: ['#c084fc', '#a855f7', '#86efac'][k % 3], g: 380 }); }
+      if (ev.h === 0) addFloat('触手を破壊！', t.x, t.base - 40, '#c084fc');
+      break;
+    }
     case 'rage':
       d.stage = ev.s; sfx.roar(); game.shake = 18;
       addFloat(ev.s === 2 ? '🔥 ドラゴンが激怒した！' : '😡 ドラゴンが怒った！', x, y - 30, ev.s === 2 ? '#ef4444' : '#fb923c');
@@ -2351,6 +2384,42 @@ function drawLasers(now){
       ctx.shadowBlur = 0; ctx.strokeStyle = `rgba(255,220,120,${k})`; ctx.lineWidth = w;
       ctx.stroke();
       ctx.strokeStyle = `rgba(255,255,255,${k})`; ctx.lineWidth = w * .35; ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+function drawTentacles(now){
+  for (const t of game.tents) {
+    t.flash = Math.max(0, t.flash - 1 / 60);
+    if (t.h <= 0) {   // 根元だけ残る
+      ctx.fillStyle = '#581c87'; ctx.beginPath(); ctx.ellipse(t.x, t.base, 14, 6, 0, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    const n = 14, pts = [];
+    for (let k = 0; k <= n; k++) {
+      const u = k / n, y = t.base - t.h * u;
+      const sway = Math.sin(now * 2.2 + t.ph + u * 3) * 7 * u * u;
+      pts.push({ x: t.x + sway, y, w: (TENT_HW + 2) * (1 - u * .65) });
+    }
+    ctx.save();
+    if (t.flash > 0) ctx.filter = 'brightness(1.8)';
+    const g = ctx.createLinearGradient(t.x - 14, 0, t.x + 14, 0);
+    g.addColorStop(0, '#6b21a8'); g.addColorStop(.5, '#a855f7'); g.addColorStop(1, '#6b21a8');
+    ctx.fillStyle = g; ctx.beginPath();
+    pts.forEach((p, k) => k ? ctx.lineTo(p.x - p.w, p.y) : ctx.moveTo(p.x - p.w, p.y));
+    for (let k = n; k >= 0; k--) ctx.lineTo(pts[k].x + pts[k].w, pts[k].y);
+    ctx.closePath(); ctx.fill();
+    // 吸盤（戦車側）
+    ctx.fillStyle = 'rgba(251,207,232,.8)';
+    for (let k = 1; k < n; k += 2) { const p = pts[k]; ctx.beginPath(); ctx.arc(p.x + t.sd * p.w * .55, p.y, Math.max(1.5, p.w * .3), 0, Math.PI * 2); ctx.fill(); }
+    // 先端：無傷なら丸まった先、削られていれば切り口
+    const tip = pts[n];
+    if (t.h >= t.max) {
+      ctx.strokeStyle = '#a855f7'; ctx.lineWidth = tip.w * 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(tip.x - t.sd * 8, tip.y, 8, 0, Math.PI * 1.3 * t.sd, t.sd < 0); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#3b0764'; ctx.beginPath(); ctx.ellipse(tip.x, tip.y, tip.w, 4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#86efac'; ctx.beginPath(); ctx.arc(tip.x, tip.y + 2, 2.5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
   }
@@ -2516,7 +2585,7 @@ function bossSendState(){
                             t.dead ? 1 : 0, t.ghost ? 1 : 0, t.hits]),
     s: game.shells.map(s => [s.id, r1(s.x), r1(s.y), s.bomb ? 1 : 0, s.owner]),
     f: game.fires.map(f => [f.id, r1(f.x), r1(f.y)]),
-    dh: game.dragon.hp, hn: game.dragon.hitN });
+    dh: game.dragon.hp, hn: game.dragon.hitN, th: game.tents.map(t => t.h) });
 }
 function onBossNet(d, c){
   if (!d || !d.t) return;
@@ -2557,7 +2626,7 @@ function onBossNet(d, c){
         if (o) { trail.push({ x: o.x, y: o.y }); if (trail.length > 8) trail.shift(); }
         return { id, x, y, bomb: !!b, owner, trail };
       });
-      if (game.phase !== 'over') { game.fires = d.f.map(([id, x, y]) => ({ id, x, y })); game.dragon.hp = d.dh; game.dragon.hitN = d.hn; }
+      if (game.phase !== 'over') { game.fires = d.f.map(([id, x, y]) => ({ id, x, y })); game.dragon.hp = d.dh; game.dragon.hitN = d.hn; if (d.th) d.th.forEach((h, i) => game.tents[i].h = h); }
       break;
     }
     case 'bex': applyBossFx(d); break;
