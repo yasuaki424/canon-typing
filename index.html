@@ -66,11 +66,13 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
 .pchip{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-weight:700;font-size:14px}
 .pchip i{width:12px;height:12px;border-radius:50%;display:inline-block}
 #bossStatus{min-height:1.4em;color:var(--muted)} #bossStatus.err{color:var(--bad)}
-#rankTable{border-collapse:collapse;min-width:min(520px,90%);font-size:clamp(13px,1.6vw,18px)}
-#rankTable td,#rankTable th{padding:5px 14px;border-bottom:1px solid var(--line);text-align:left}
-#rankTable th{color:var(--muted);font-weight:600;font-size:13px}
-#rankTable tr.me td{background:rgba(255,204,51,.12)}
+#rankTable,#totalTable{border-collapse:collapse;min-width:min(360px,90%);font-size:clamp(13px,1.5vw,17px)}
+#rankTable td,#rankTable th,#totalTable td,#totalTable th{padding:4px 12px;border-bottom:1px solid var(--line);text-align:left}
+#rankTable th,#totalTable th{color:var(--muted);font-weight:600;font-size:13px}
+#rankTable tr.me td,#totalTable tr.me td{background:rgba(255,204,51,.12)}
 #rankTable tr.out td{color:var(--muted)}
+.rankHead{font-weight:800;margin-bottom:4px;color:var(--accent)}
+#ovBossRes.final{background:rgba(8,12,24,.38);backdrop-filter:none}
 @media (max-width:760px){#panel{grid-template-columns:1fr auto}#inputLine{grid-column:1 / span 2;grid-row:2}#help{grid-column:1 / span 2;text-align:left}}
 </style>
 </head>
@@ -114,7 +116,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
           <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
           <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）</li>
           <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
-          <li><b>ボスチャレンジ</b> … 1〜8人で協力して巨大ドラゴンを攻撃。周りの触手がまっすぐな弾を防ぐので、山なりに撃とう。当てた数でランキング</li>
+          <li><b>ボスチャレンジ</b> … 1〜8人で協力して3体のボスに順番に挑戦（倒すと次へ進める）。ドラゴンは触手がまっすぐな弾を防ぐので山なりに撃とう。当てた数でランキング</li>
           <li>入力は <b>半角英数モード（IMEオフ）</b> で。すべて <kbd>Enter</kbd> で確定</li>
         </ul>
       </details>
@@ -137,7 +139,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
     <!-- ボスチャレンジ ロビー -->
     <div class="overlay" id="ovBoss">
       <h2 style="font-size:clamp(24px,min(4vw,7vh),42px)">🐉 ボスチャレンジ</h2>
-      <p class="sub">1〜8人で協力して巨大ドラゴンを倒そう！（問題レベル・難易度はトップページで選んだものを使います）</p>
+      <p class="sub">1〜8人で協力して3体のボス（🦋 ジャイアントモス → 🐕 ケルベロス → 🐉 ドラゴン）に順番に挑もう！（問題レベル・難易度はトップページで選んだものを使います）</p>
       <div class="row"><span class="label">なまえ</span><input class="code name" id="bossName" maxlength="10" placeholder="なまえ" autocomplete="off" spellcheck="false"></div>
       <div class="row" id="bossEntry">
         <button class="primary" id="btnBossSolo">ひとりで挑戦</button>
@@ -156,11 +158,16 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
 
     <!-- ボスチャレンジ 結果 -->
     <div class="overlay" id="ovBossRes">
-      <h2 style="color:#ffd166">DRAGON DEFEATED!</h2>
-      <p class="sub">ドラゴンに当てた数のランキング（榴弾は1発で2発分）。やられてグレーで復活した人はランク外です</p>
-      <table id="rankTable"></table>
+      <h2 id="bossResTitle" style="color:#ffd166">DEFEATED!</h2>
+      <p class="sub" id="bossResSub"></p>
+      <div class="row" style="align-items:flex-start;gap:24px">
+        <div id="rankWrap"><div class="rankHead" id="rankHead"></div><table id="rankTable"></table></div>
+        <div id="totalWrap"><div class="rankHead">合計ランキング</div><table id="totalTable"></table></div>
+      </div>
       <div class="row">
-        <button class="primary" id="btnBossAgain">もう一度</button>
+        <button class="primary" id="btnBossNext">次のボスへ</button>
+        <button id="btnBossEnd">ここで終了する</button>
+        <button class="primary" id="btnBossAgain">もう一度（1体目から）</button>
         <button id="btnBossTop">トップに戻る</button>
       </div>
       <div id="bossResStatus" class="sub"></div>
@@ -213,12 +220,12 @@ const DIFFS = {
 };
 const HELL_REPEAT = 3, BABY_CHARS = 3;
 // ボスチャレンジ
-const BOSS_PREFIX = 'canon-typing-boss-v1-', BOSS_MAX = 8;
+const BOSS_PREFIX = 'canon-typing-boss-v2-', BOSS_MAX = 8;
 const BOSS_SC = 1 / 3, BOSS_V = 650;                    // 戦車は通常の1/3サイズ。距離が近いので初速を下げる
 const FIRE_DMG = 5, FIRE_R = 22;
 const BOSS_HP_MULT = 2;                                 // ボス戦の戦車は耐久力2倍（炎40発で壊れる。hell は20発）
 const hpFull = t => t.sc ? HP_MAX * BOSS_HP_MULT : HP_MAX;   // ゲージ満タンの値
-const DRAGON_HP_PER = 50, BARRAGE_EVERY = 10, BARRAGE_N = 20;
+const BOSS_HP_BASE = 50, BARRAGE_EVERY = 10, BARRAGE_N = 20;   // ボスの耐久力は「人数×50発分×ボスごとの倍率」
 const LASER_P = .25, LASER_CHARGE = .8, LASER_LIFE = .6, LASER_W = 14;   // ブレス：反撃の25%で発生、0.8秒ためて0.6秒照射
 const SWEEP_LIFE = 1.3;                                                    // なぎ払い：1.3秒かけて射線が上から下へ動く
 // 怒り段階（HP 66%・33% で上昇）ごとの自発攻撃の間隔倍率と、技の出やすさ（重み）
@@ -235,6 +242,22 @@ const DR_NECKS = [[-70, -115], [-28, -135], [28, -135], [70, -115]];
 // 触手の防御壁：ドラゴンの左右に3本ずつ。内側ほど高く、まっすぐな弾は通さない（山なりの弾だけが本体に届く）
 const TENT_X = [205, 228, 251], TENT_H = [320, 280, 240], TENT_HW = 12;
 const TENT_DMG = 14, TENT_BOMB_DMG = 36;   // 1発で14px、榴弾で36px縮む（戦車の防御壁より壊れにくい）
+// 巨大蛾（空中に浮かぶ）とケルベロスの形
+const MOTH_Y = -250, BOSS_GROUND = 560;
+const CB_BODY = { y: -70, rx: 100, ry: 52 };
+const CB_HEADS = [[-115, -175], [0, -205], [115, -175]];
+const CB_NECKS = [[-45, -100], [0, -112], [45, -100]];
+// 戦う順番。hpRate=耐久力の倍率、freq=攻撃頻度の倍率（ドラゴン=1）、near=戦車が近づける距離、moves=怒り段階ごとの自発攻撃の重み
+const BOSSES = [
+  { type: 'moth', name: '🦋 ジャイアントモス', short: 'ジャイアントモス', hpRate: .6, freq: .6, heads: 1, topY: -430, near: 300,
+    special: '鱗粉の嵐', specialText: '✨ 鱗粉の嵐！',
+    moves: [{ red: 45, scales: 30, wave: 25 }, { red: 30, scales: 35, wave: 35 }, { red: 20, scales: 40, wave: 40 }] },
+  { type: 'cerb', name: '🐕 ケルベロス', short: 'ケルベロス', hpRate: .8, freq: .8, heads: 3, topY: -300, near: 260,
+    special: '三首同時ブレス', specialText: '🔥 三首同時ブレス！',
+    moves: [{ red: 45, claser: 30, bite: 25 }, { red: 30, claser: 35, bite: 35 }, { red: 20, claser: 40, bite: 40 }] },
+  { type: 'dragon', name: '🐉 ドラゴン', short: 'ドラゴン', hpRate: 1, freq: 1, heads: 4, topY: -330, near: 330,
+    special: '全周囲ブレス', specialText: '🔥 全周囲ブレス！', moves: RAGE_MOVES },
+];
 
 // ====================================================================
 //  単語リスト  英語|漢字|ひらがな（ひらがな省略時はカタカナ語）
@@ -1491,6 +1514,9 @@ function draw(){
   for (let x = 0; x <= W; x += 20) ctx.lineTo(x, 430 + Math.sin(x * .004 + game.seed % 7) * 40 + Math.sin(x * .013) * 16);
   ctx.lineTo(W, H); ctx.fill();
 
+  if (game.night) {   // 花火のときは夜空にする
+    ctx.fillStyle = `rgba(4,6,22,${game.night})`; ctx.fillRect(-30, -30, W + 60, H + 60);
+  }
   // 地面
   const h = game.terrain;
   const dirt = ctx.createLinearGradient(0, 300, 0, H);
@@ -1515,7 +1541,7 @@ function draw(){
     }
   }
 
-  if (game.mode === 'boss') { drawDragon(now); drawTentacles(now); }
+  if (game.mode === 'boss') { drawBoss(now); drawTentacles(now); }
   if (game.mode !== 'demo' && (game.phase === 'play' || game.phase === 'ready')) drawPreview(game.tanks[game.mySide]);
   for (const t of game.tanks) drawTank(t, now);
 
@@ -1920,7 +1946,7 @@ function onNet(d){
 }
 
 // ====================================================================
-//  ボスチャレンジ（1〜8人で協力してドラゴンを倒す）
+//  ボスチャレンジ（1〜8人で協力して3体のボスに順番に挑む：巨大蛾 → ケルベロス → ドラゴン）
 //  ホスト（ひとりの場合は自分）が全ての判定を行い、参加者はコマンド送信と描画のみ
 // ====================================================================
 function shade(hex, k){   // k<0 で暗く、k>0 で明るく
@@ -1928,32 +1954,53 @@ function shade(hex, k){   // k<0 で暗く、k>0 で明るく
     .map(v => Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k));
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
-const headPos = i => { const d = game.dragon; return { x: d.x + DR_HEADS[i][0], y: d.gy + DR_HEADS[i][1] }; };
-const mouthPos = i => { const p = headPos(i); return { x: p.x + (i < 2 ? -46 : 46), y: p.y + 12 }; };
+const bossDef = () => BOSSES[game.boss.idx];
+const headPos = i => { const d = game.boss; return { x: d.x + DR_HEADS[i][0], y: d.gy + DR_HEADS[i][1] }; };
 function headSway(i, now){ return { x: Math.sin(now * 1.6 + i * 1.3) * 3, y: Math.sin(now * 1.9 + i * 1.7) * 6 }; }
+// 攻撃の発射点（頭番号 h、向き f）。ドラゴンは左2本が左向き・右2本が右向き、ケルベロスは真ん中の頭だけ左右どちらにも向く
+function emitPoint(h, f){
+  const d = game.boss;
+  if (d.type === 'dragon') { const p = headPos(h), ff = h < 2 ? -1 : 1; return { x: p.x + ff * 46, y: p.y + 12, f: ff }; }
+  if (d.type === 'cerb') {
+    const ff = h === 0 ? -1 : h === 2 ? 1 : (f || d.midF || 1);
+    return { x: d.x + CB_HEADS[h][0] + ff * 44, y: d.gy + CB_HEADS[h][1] + 8, f: ff };
+  }
+  const ff = f || 1;   // 蛾：頭の口元
+  return { x: d.x + ff * 8, y: d.gy + MOTH_Y - 76, f: ff };
+}
+function pickHead(tx){   // 狙う側に向いている頭を選ぶ
+  const d = game.boss, left = tx < d.x, r2 = Math.random() < .5;
+  if (d.type === 'dragon') return { h: left ? (r2 ? 0 : 1) : (r2 ? 2 : 3), f: left ? -1 : 1 };
+  if (d.type === 'cerb') return { h: left ? (r2 ? 0 : 1) : (r2 ? 2 : 1), f: left ? -1 : 1 };
+  return { h: 0, f: left ? -1 : 1 };
+}
 
-function startBoss({ role, seed, roster, you }){
+function startBoss({ role, seed, roster, you, idx = 0, totals = null }){
   if (seed == null) seed = (Math.random() * 1e9) | 0;
-  const ter = genTerrain(seed), h = ter.h, c = W / 2, p = h[c];
-  for (let x = 0; x <= W; x++) {   // ドラゴンの足元を平らにする
+  const def = BOSSES[idx];
+  // ボスの足元を平らにする（上部の表示と重ならないよう、地面の高さは一定以上低くする）
+  const ter = genTerrain(seed), h = ter.h, c = W / 2, p = Math.max(h[c], BOSS_GROUND);
+  for (let x = 0; x <= W; x++) {
     const dd = Math.abs(x - c);
     if (dd <= 190) h[x] = p;
     else if (dd < 290) { let s = (dd - 190) / 100; s = s * s * (3 - 2 * s); h[x] = p * (1 - s) + h[x] * s; }
   }
-  const hpMax = roster.length * DRAGON_HP_PER;
+  const hpMax = Math.round(roster.length * BOSS_HP_BASE * def.hpRate);
   game = { mode: 'boss', role, seed, terrain: h, flat: ter.flat, clouds: ter.clouds,
-           tanks: [], walls: [], shells: [], fires: [], fireQueue: [], lasers: [], parts: [], floats: [],
+           tanks: [], walls: [], shells: [], fires: [], fireQueue: [], lasers: [], parts: [], floats: [], tents: [],
            phase: 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0, mySide: you, rank: null,
-           dragon: { x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: [0, 0, 0, 0], dead: false, deadT: 0, sndT: 0, atkT: 5, stage: 0 } };
-  // 偶数番目は左側、奇数番目は右側に並べる（ドラゴンをまたいでは移動できない）
-  game.tents = [];
-  for (const sd of [-1, 1]) TENT_X.forEach((ox, j) => {
-    const x = c + sd * ox;
-    game.tents.push({ x, base: terrainAt(x), h: TENT_H[j], max: TENT_H[j], sd, ph: Math.random() * 6.28, flash: 0 });
-  });
+           bossIdx: idx, totals: totals || roster.map(() => 0),
+           boss: { idx, type: def.type, x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: new Array(def.heads).fill(0),
+                   dead: false, deadT: 0, sndT: 0, atkT: 5 / def.freq, stage: 0, flapT: 0, midF: 1 } };
+  if (def.type === 'dragon') {   // 触手の防御壁はドラゴンだけ
+    for (const sd of [-1, 1]) TENT_X.forEach((ox, j) => {
+      const x = c + sd * ox;
+      game.tents.push({ x, base: terrainAt(x), h: TENT_H[j], max: TENT_H[j], sd, ph: Math.random() * 6.28, flash: 0 });
+    });
+  }
+  // 偶数番目は左側、奇数番目は右側に並べる（ボスをまたいでは移動できない）
   const sides = [[], []]; roster.forEach((_, i) => sides[i % 2].push(i));
-  // 移動できる範囲は 40〜(中心-330)。初期配置は山なりで本体を狙える 220〜(中心-330) に並べる
-  const lo = 40, hi = c - 330, spawnLo = 220;
+  const lo = 40, hi = c - def.near, spawnLo = 220;
   game.tanks = roster.map((pl, i) => {
     const lr = i % 2, k = sides[lr].indexOf(i), m = sides[lr].length;
     const x0 = spawnLo + (hi - spawnLo) * (k + 1) / (m + 1), x = lr ? W - x0 : x0;
@@ -1968,33 +2015,57 @@ function startBoss({ role, seed, roster, you }){
   nextWord();
   hideOverlays();
   if (document.activeElement) document.activeElement.blur();
-  setMsg('READY…　みんなでドラゴンを倒そう！', 'info');
+  setMsg(`READY…　ボス ${idx + 1}/3：${def.name} を倒そう！`, 'info');
   renderPanel();
 }
 
 // ---------- 当たり判定 ----------
-function dragonHit(x, y){
-  const d = game.dragon; if (d.dead) return false;
-  const bx = (x - d.x) / DR_BODY.rx, by = (y - (d.gy + DR_BODY.y)) / DR_BODY.ry;
-  if (bx * bx + by * by < 1) return true;
+function segHit(x, y, ax, ay, bx, by, r){
+  const vx = bx - ax, vy = by - ay, u = clamp(((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy), 0, 1);
+  return (x - ax - vx * u) ** 2 + (y - ay - vy * u) ** 2 < r * r;
+}
+const inEllipse = (x, y, cx, cy, rx, ry) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1;
+function bossHit(x, y){
+  const d = game.boss; if (d.dead) return false;
+  if (d.type === 'moth') {
+    const cx = d.x, cy = d.gy + MOTH_Y;
+    if (inEllipse(x, y, cx, cy + 10, 34, 95) || (x - cx) ** 2 + (y - cy + 100) ** 2 < 34 * 34) return true;
+    for (const s of [-1, 1])
+      if (inEllipse(x, y, cx + s * 140, cy - 45, 125, 75) || inEllipse(x, y, cx + s * 105, cy + 75, 95, 60)) return true;
+    return false;
+  }
+  if (d.type === 'cerb') {
+    if (inEllipse(x, y, d.x, d.gy + CB_BODY.y, CB_BODY.rx, CB_BODY.ry)) return true;
+    for (let i = 0; i < 3; i++) {
+      const hx = d.x + CB_HEADS[i][0], hy = d.gy + CB_HEADS[i][1], f = i === 0 ? -1 : i === 2 ? 1 : d.midF;
+      if ((x - hx - f * 16) ** 2 + (y - hy) ** 2 < 34 * 34) return true;
+      if (segHit(x, y, d.x + CB_NECKS[i][0], d.gy + CB_NECKS[i][1], hx, hy, 14)) return true;
+    }
+    return false;
+  }
+  if (inEllipse(x, y, d.x, d.gy + DR_BODY.y, DR_BODY.rx, DR_BODY.ry)) return true;
   for (let i = 0; i < 4; i++) {
     const hp = headPos(i), f = i < 2 ? -1 : 1;
     if ((x - hp.x - f * 14) ** 2 + (y - hp.y) ** 2 < 36 * 36) return true;
-    // 首（線分との距離）
-    const ax = d.x + DR_NECKS[i][0], ay = d.gy + DR_NECKS[i][1], vx = hp.x - ax, vy = hp.y - ay;
-    const u = clamp(((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy), 0, 1);
-    if ((x - ax - vx * u) ** 2 + (y - ay - vy * u) ** 2 < 14 * 14) return true;
+    if (segHit(x, y, d.x + DR_NECKS[i][0], d.gy + DR_NECKS[i][1], hp.x, hp.y, 14)) return true;
   }
   return false;
 }
 
 // ---------- 更新 ----------
+const KINDS = ['fire', 'red', 'scale', 'wave', 'fang'];
+const TRAIL_COL = { fire: ['#ffd166', '#ff9f1c', '#ff5400'], red: ['#fecaca', '#ef4444', '#b91c1c'],
+                    scale: ['#fef9c3', '#fde047', '#facc15'], wave: ['#e0f2fe', '#a5f3fc', '#ffffff'], fang: ['#fee2e2', '#ffffff', '#f87171'] };
 function bossUpdate(dt){
-  const d = game.dragon;
+  const d = game.boss;
   d.flash = Math.max(0, d.flash - dt); d.glow = d.glow.map(g => Math.max(0, g - dt)); d.sndT = Math.max(0, d.sndT - dt);
+  d.flapT = Math.max(0, d.flapT - dt);
   if (d.dead) d.deadT += dt;
-  for (const f of game.fires) game.parts.push({ x: f.x + rnd(-4, 4), y: f.y + rnd(-4, 4), vx: rnd(-30, 30), vy: rnd(-40, 10),
-    life: rnd(.2, .45), max: .45, size: rnd(4, 8), color: ['#ffd166', '#ff9f1c', '#ff5400'][Math.floor(Math.random() * 3)], g: -80 });
+  for (const f of game.fires) {
+    const col = TRAIL_COL[f.kind] || TRAIL_COL.fire;
+    game.parts.push({ x: f.x + rnd(-4, 4), y: f.y + rnd(-4, 4), vx: rnd(-30, 30), vy: rnd(-40, 10),
+      life: rnd(.2, .4), max: .4, size: f.kind === 'scale' ? rnd(2, 4) : rnd(3, 7), color: col[Math.floor(Math.random() * 3)], g: f.kind === 'scale' ? 30 : -80 });
+  }
   for (const L of game.lasers) {
     if (L.charge > 0) {
       L.charge -= dt; d.glow[L.h] = Math.max(d.glow[L.h], .2);
@@ -2002,24 +2073,26 @@ function bossUpdate(dt){
     } else {
       L.life -= dt;
       // 射線を更新（なぎ払いは角度が動く）。ダメージは権威側で毎フレーム判定（1本につき1回まで）
-      Object.assign(L, laserPath(L.h, L.a + (L.a2 - L.a) * clamp(1 - L.life / L.dur, 0, 1)));
+      Object.assign(L, laserPath(L.h, L.a + (L.a2 - L.a) * clamp(1 - L.life / L.dur, 0, 1), L.f));
       d.glow[L.h] = Math.max(d.glow[L.h], .15);
       if (isAuth()) laserDamage(L);
+      const col = L.c === 'red' ? TRAIL_COL.red : TRAIL_COL.fire;
       game.parts.push({ x: L.x1 + rnd(-6, 6), y: L.y1 + rnd(-6, 2), vx: rnd(-120, 120), vy: rnd(-160, -20),
-        life: rnd(.2, .45), max: .45, size: rnd(2, 5), color: ['#fff7ae', '#ffb703', '#ff5400'][Math.floor(Math.random() * 3)], g: 400 });
+        life: rnd(.2, .45), max: .45, size: rnd(2, 5), color: col[Math.floor(Math.random() * 3)], g: 400 });
     }
   }
   game.lasers = game.lasers.filter(L => L.life > 0);
   if (d.stage === 2 && !d.dead && Math.random() < dt * 8) {   // 激怒中は口から煙
-    const m = mouthPos(Math.floor(Math.random() * 4));
+    const m = emitPoint(Math.floor(Math.random() * d.glow.length), Math.random() < .5 ? -1 : 1);
     game.parts.push({ x: m.x, y: m.y, vx: rnd(-15, 15), vy: rnd(-50, -25), life: rnd(.8, 1.4), max: 1.4, size: rnd(6, 12), color: '#4b5563', g: -10, smoke: true });
   }
+  updateFireworks(dt);
   if (!isAuth()) return;
   if (game.phase === 'play' && !d.dead) {   // 撃たれなくても自分から攻撃してくる
     d.atkT -= dt;
-    if (d.atkT <= 0) { dragonMove(pickMove()); d.atkT = rnd(4, 7) * RAGE_MULT[d.stage]; }
+    if (d.atkT <= 0) { bossMove(pickMove()); d.atkT = rnd(4, 7) * RAGE_MULT[d.stage] / bossDef().freq; }
   }
-  for (const q of game.fireQueue) { q.delay -= dt; if (q.delay <= 0) launchFire(q.tx); }
+  for (const q of game.fireQueue) { q.delay -= dt; if (q.delay <= 0) launchBall(q.tx, q.kind, q.src); }
   game.fireQueue = game.fireQueue.filter(q => q.delay > 0);
   bossSimShells(dt);
   bossSimFires(dt);
@@ -2038,7 +2111,7 @@ function bossSimShells(dt){
       s.vy += G * h; s.x += s.vx * h; s.y += s.vy * h;
       const ti = tentHit(s.x, s.y);
       if (ti >= 0) { s.dead = true; hitTent(ti, s); break; }
-      if (dragonHit(s.x, s.y)) { s.dead = true; shellHitsDragon(s); break; }
+      if (bossHit(s.x, s.y)) { s.dead = true; shellHitsBoss(s); break; }
       if (s.y >= terrainAt(s.x)) { s.dead = true; bossEvent({ t: 'bex', k: 'ground', x: s.x, y: s.y, b: s.bomb ? 1 : 0 }); break; }
       if (s.x < -150 || s.x > W + 150 || s.y > H + 50) { s.dead = true; break; }
     }
@@ -2058,36 +2131,46 @@ function hitTent(i, sh){
   if (t.h < 20) t.h = 0;
   bossEvent({ t: 'bex', k: 'tent', i, h: t.h, x: sh.x, y: sh.y, b: sh.bomb ? 1 : 0 });
 }
-function shellHitsDragon(s){
-  const d = game.dragon, t = game.tanks[s.owner];
+function shellHitsBoss(s){
+  const d = game.boss, t = game.tanks[s.owner];
   if (d.dead || game.phase === 'over') return;
   const units = s.bomb ? 2 : 1, dm = units * (t.diff === 'hell' ? 2 : 1);   // 榴弾は2発分、hell は攻撃力2倍
   d.hp = Math.max(0, d.hp - dm); t.hits += units;
   bossEvent({ t: 'bex', k: 'dragon', x: s.x, y: s.y, b: s.bomb ? 1 : 0, o: s.owner, dm });
   if (d.hp <= 0) { bossEnd(); return; }
   const r = d.hp / d.max, st = r <= 1 / 3 ? 2 : r <= 2 / 3 ? 1 : 0;
-  if (st > d.stage) { d.stage = st; bossEvent({ t: 'bex', k: 'rage', s: st, x: d.x, y: d.gy - 330 }); d.atkT = Math.min(d.atkT, 1.2); }
-  dragonAttack();
+  if (st > d.stage) { d.stage = st; bossEvent({ t: 'bex', k: 'rage', s: st, x: d.x, y: Math.max(180, d.gy + bossDef().topY) }); d.atkT = Math.min(d.atkT, 1.2); }
+  bossCounter();
 }
-function dragonAttack(){   // 攻撃を受けるたびに反撃。10回に1度は全周囲ブレス
-  const d = game.dragon; d.hitN++;
-  if (d.hitN % BARRAGE_EVERY === 0) {
-    const span = W / 2 - 220;
+function bossCounter(){   // 攻撃を受けたときの反撃（頻度はボスごと）。10回に1度は大技
+  const d = game.boss, def = bossDef(); d.hitN++;
+  if (d.hitN % BARRAGE_EVERY === 0) { bossSpecial(); return; }
+  if (Math.random() >= def.freq) return;
+  if (d.type === 'dragon') { if (!(Math.random() < LASER_P && startLaser())) launchBall(randomTx(), 'fire'); }
+  else if (d.type === 'cerb') { if (!(Math.random() < .2 && startLaser())) launchBall(randomTx(), 'red'); }
+  else launchBall(randomTx(), 'red');
+}
+function bossSpecial(){
+  const d = game.boss, def = bossDef(), span = W / 2 - 220;
+  if (d.type === 'cerb') {   // 三首同時ブレス
+    for (let h = 0; h < 3; h++) startLaser(false, h, h === 1 ? (Math.random() < .5 ? -1 : 1) : 0);
+  } else {   // ドラゴン：全周囲の炎 ／ 蛾：鱗粉の嵐
+    const moth = d.type === 'moth';
+    if (moth) bossEvent({ t: 'bex', k: 'flap' });
     for (let i = 0; i < BARRAGE_N; i++) {
       const lr = i % 2, frac = (Math.floor(i / 2) + Math.random()) / (BARRAGE_N / 2);
-      game.fireQueue.push({ delay: i * .06, tx: lr ? W / 2 + 190 + frac * span : 30 + frac * span });
+      const tx = lr ? W / 2 + 190 + frac * span : 30 + frac * span;
+      game.fireQueue.push({ delay: i * .06, tx, kind: moth ? 'scale' : 'fire', src: moth ? wingPoint(lr ? 1 : -1) : null });
     }
-    bossEvent({ t: 'bex', k: 'roar', x: d.x, y: d.gy - 320 });
-  } else if (Math.random() < LASER_P && startLaser()) {
-    // ブレス（直線レーザー）
-  } else launchFire(randomTx());
+  }
+  bossEvent({ t: 'bex', k: 'roar', text: def.specialText, x: d.x, y: Math.max(160, d.gy + def.topY + 10) });
 }
-const randomTx = () => { const d = game.dragon; return Math.random() < .5 ? rnd(30, d.x - 190) : rnd(d.x + 190, W - 30); };
+const randomTx = () => { const d = game.boss; return Math.random() < .5 ? rnd(30, d.x - 190) : rnd(d.x + 190, W - 30); };
 function pickMove(){
-  const w = RAGE_MOVES[game.dragon.stage];
+  const w = bossDef().moves[game.boss.stage];
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0);
   for (const k in w) if ((r -= w[k]) < 0) return k;
-  return 'single';
+  return Object.keys(w)[0];
 }
 function hateTarget(){   // 当てた数が多い人ほど狙われやすい（6割はトップを狙う）
   const alive = game.tanks.filter(t => !t.dead);
@@ -2095,41 +2178,79 @@ function hateTarget(){   // 当てた数が多い人ほど狙われやすい（6
   alive.sort((a, b) => b.hits - a.hits);
   return alive[0].hits > 0 && Math.random() < .6 ? alive[0] : alive[Math.floor(Math.random() * alive.length)];
 }
-function say(text){ const d = game.dragon; bossEvent({ t: 'bex', k: 'say', text, x: d.x, y: d.gy - 330 }); }
-function dragonMove(kind){   // 自発攻撃の技
-  const d = game.dragon, side = () => Math.random() < .5;
+function say(text){ const d = game.boss; bossEvent({ t: 'bex', k: 'say', text, x: d.x, y: Math.max(150, d.gy + bossDef().topY) }); }
+function wingPoint(s){ const d = game.boss; return { x: d.x + s * rnd(60, 230), y: d.gy + MOTH_Y + rnd(-90, 100) }; }
+function bossMove(kind){   // 自発攻撃の技
+  const d = game.boss, st = d.stage, side = () => Math.random() < .5;
   switch (kind) {
-    case 'single': launchFire(randomTx()); break;
+    // --- ドラゴン ---
+    case 'single': launchBall(randomTx(), 'fire'); break;
     case 'triple': {
       const tx = randomTx();
-      for (let i = 0; i < 3; i++) game.fireQueue.push({ delay: i * .18, tx: clamp(tx + (i - 1) * 45, 20, W - 20) });
+      for (let i = 0; i < 3; i++) game.fireQueue.push({ delay: i * .18, tx: clamp(tx + (i - 1) * 45, 20, W - 20), kind: 'fire' });
       say('3連射！'); break;
     }
     case 'fan': {
       const left = side(), lo = left ? 30 : d.x + 190, hi = left ? d.x - 190 : W - 30;
-      for (let i = 0; i < 5; i++) game.fireQueue.push({ delay: i * .08, tx: lo + (hi - lo) * (i + .5) / 5 });
+      for (let i = 0; i < 5; i++) game.fireQueue.push({ delay: i * .08, tx: lo + (hi - lo) * (i + .5) / 5, kind: 'fire' });
       say('扇状ブレス！'); break;
     }
     case 'aimed': {
-      const t = hateTarget(); if (!t) { launchFire(randomTx()); break; }
-      for (let i = 0; i < 2; i++) game.fireQueue.push({ delay: i * .35, tx: clamp(t.x + rnd(-25, 25), 20, W - 20) });
+      const t = hateTarget(); if (!t) { launchBall(randomTx(), 'fire'); break; }
+      for (let i = 0; i < 2; i++) game.fireQueue.push({ delay: i * .35, tx: clamp(t.x + rnd(-25, 25), 20, W - 20), kind: 'fire' });
       say(`🎯 ${t.name} を狙っている！`); break;
     }
-    case 'laser': if (!startLaser()) launchFire(randomTx()); break;
-    case 'sweep': if (startLaser(true)) say('なぎ払い！'); else launchFire(randomTx()); break;
+    case 'laser': if (!startLaser()) launchBall(randomTx(), 'fire'); break;
+    case 'sweep': if (startLaser(true)) say('なぎ払い！'); else launchBall(randomTx(), 'fire'); break;
+    // --- 蛾・ケルベロス共通：通常攻撃（赤い砲弾。半分はよく当てている人を狙う） ---
+    case 'red': {
+      const n = 1 + st, t = Math.random() < .5 ? hateTarget() : null;
+      for (let i = 0; i < n; i++) game.fireQueue.push({ delay: i * .3, kind: 'red',
+        tx: t ? clamp(t.x + rnd(-30, 30), 20, W - 20) : randomTx() });
+      break;
+    }
+    // --- 蛾 ---
+    case 'scales': {   // 羽ばたいて鱗粉（黄色い砲弾）を周囲に散布
+      const n = [8, 11, 14][st];
+      bossEvent({ t: 'bex', k: 'flap' });
+      for (let i = 0; i < n; i++) { const lr = i % 2; game.fireQueue.push({ delay: .2 + i * .07, kind: 'scale', tx: lr ? rnd(d.x + 190, W - 30) : rnd(30, d.x - 190), src: wingPoint(lr ? 1 : -1) }); }
+      say('鱗粉！'); break;
+    }
+    case 'wave': {   // 羽ばたいて衝撃波（半月型の刃が放射状にまっすぐ飛ぶ）
+      const n = [5, 6, 7][st], cx = d.x, cy = d.gy + MOTH_Y;
+      bossEvent({ t: 'bex', k: 'flap' });
+      for (let i = 0; i < n; i++) {
+        const a = (15 + 150 * i / (n - 1)) * DEG;   // 右下〜左下へ扇状
+        launchStraight(cx + Math.cos(a) * 60, cy + Math.sin(a) * 60, a, 380, 'wave', 2600);
+      }
+      say('衝撃波！'); break;
+    }
+    // --- ケルベロス ---
+    case 'claser': if (!startLaser()) launchBall(randomTx(), 'red'); break;
+    case 'bite': {   // 噛みつき：牙の形の衝撃波が地面すれすれにまっすぐ飛ぶ
+      const heads = st === 0 ? [Math.floor(Math.random() * 3)] : [0, 2];
+      heads.forEach((h, k) => {
+        const f = h === 0 ? -1 : h === 2 ? 1 : (side() ? -1 : 1), p = emitPoint(h, f), a = rnd(8, 20) * DEG;
+        bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfx', h, f });
+        launchStraight(p.x, p.y, f > 0 ? a : Math.PI - a, 520, 'fang', 760);
+      });
+      say('噛みつき！'); break;
+    }
   }
 }
-function startLaser(sweep = false){
-  const free = [0, 1, 2, 3].filter(h => !game.lasers.some(L => L.h === h));
-  if (!free.length) return false;
-  const h = free[Math.floor(Math.random() * free.length)];
+function startLaser(sweep = false, hForce = null, fForce = 0){
+  const d = game.boss, nh = d.glow.length;
+  const free = [...Array(nh).keys()].filter(h => !game.lasers.some(L => L.h === h));
+  if (hForce != null ? !free.includes(hForce) : !free.length) return false;
+  const h = hForce != null ? hForce : free[Math.floor(Math.random() * free.length)];
+  const f = fForce || (d.type === 'cerb' && h === 1 ? (Math.random() < .5 ? -1 : 1) : 0);
   // 通常：水平から下向きに6〜30°で固定。なぎ払い：ほぼ水平から急角度まで動かす
   const a = sweep ? rnd(-6, 2) : rnd(6, 30), a2 = sweep ? rnd(38, 52) : a;
-  bossEvent({ t: 'bex', k: 'laser', h, a, a2, dur: sweep ? SWEEP_LIFE : LASER_LIFE });
+  bossEvent({ t: 'bex', k: 'laser', h, f, a, a2, dur: sweep ? SWEEP_LIFE : LASER_LIFE, c: d.type === 'cerb' ? 'red' : 'fire' });
   return true;
 }
-function laserPath(h, a){   // 口から直線に進み、地面か画面端で止まる
-  const p = mouthPos(h), f = h < 2 ? -1 : 1, dx = f * Math.cos(a * DEG), dy = Math.sin(a * DEG);
+function laserPath(h, a, f){   // 口から直線に進み、地面か画面端で止まる
+  const p = emitPoint(h, f), dx = p.f * Math.cos(a * DEG), dy = Math.sin(a * DEG);
   let x = p.x, y = p.y;
   for (let i = 0; i < 800; i++) {
     x += dx * 4; y += dy * 4;
@@ -2141,7 +2262,7 @@ function segDist(px, py, L){
   const vx = L.x1 - L.x0, vy = L.y1 - L.y0, u = clamp(((px - L.x0) * vx + (py - L.y0) * vy) / (vx * vx + vy * vy), 0, 1);
   return Math.hypot(px - L.x0 - vx * u, py - L.y0 - vy * u);
 }
-function damageTank(i){   // 炎・ブレス共通。やられたら3秒後にグレーで復活
+function damageTank(i){   // ボスの攻撃は全て共通ダメージ。やられたら3秒後にグレーで復活
   const t = game.tanks[i];
   t.hp = Math.max(0, t.hp - FIRE_DMG);
   if (t.hp <= 0) { t.dead = true; t.ghost = true; t.respawnT = 3; t.flyT = 0; return true; }
@@ -2156,70 +2277,115 @@ function laserDamage(L){
   });
   if (ds.length || blk.length) bossEvent({ t: 'bex', k: 'lhit', ds, died, blk });
 }
-function launchFire(tx){
-  const d = game.dragon, hi = tx < d.x ? Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
-  const p = mouthPos(hi), T = rnd(1.4, 2.4), ty = terrainAt(tx);
-  game.fires.push({ id: game.nextId++, x: p.x, y: p.y, vx: (tx - p.x) / T, vy: (ty - p.y - .5 * G * T * T) / T });
-  dragonMouthFx(hi);
-  if (isHost()) netSend({ t: 'bfire', h: hi });
+function launchBall(tx, kind = 'fire', src = null){   // 山なりの弾（着弾点 tx を狙う）
+  let x, y;
+  if (src) { x = src.x; y = src.y; }
+  else {
+    const { h, f } = pickHead(tx), p = emitPoint(h, f); x = p.x; y = p.y;
+    bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfire', h, f });
+  }
+  const T = rnd(1.4, 2.4), ty = terrainAt(tx);
+  game.fires.push({ id: game.nextId++, x, y, vx: (tx - x) / T, vy: (ty - y - .5 * G * T * T) / T, kind });
 }
-function dragonMouthFx(h){
-  const d = game.dragon; d.glow[h] = .35;
+function launchStraight(x, y, a, speed, kind, range){   // まっすぐ飛ぶ弾（衝撃波・牙）
+  game.fires.push({ id: game.nextId++, x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, kind, straight: true, dist: 0, range });
+  if (kind === 'wave') sfx.wave(); else sfx.bite();
+}
+function bossMouthFx(h, f){
+  const d = game.boss; d.glow[h] = .35;
+  if (d.type === 'cerb' && h === 1 && f) d.midF = f;
   if (d.sndT <= 0) { sfx.flame(); d.sndT = .08; }
 }
 function bossSimFires(dt){
   for (const f of game.fires) {
-    const steps = Math.max(1, Math.ceil(Math.hypot(f.vx, f.vy) * dt / 3)), h = dt / steps;
+    const sp = Math.hypot(f.vx, f.vy), steps = Math.max(1, Math.ceil(sp * dt / 3)), h = dt / steps;
     for (let k = 0; k < steps && !f.dead; k++) {
-      f.vy += G * h; f.x += f.vx * h; f.y += f.vy * h;
+      if (!f.straight) f.vy += G * h;
+      f.x += f.vx * h; f.y += f.vy * h;
+      if (f.straight && (f.dist += sp * h) > f.range) { f.dead = true; break; }
       for (const t of game.tanks) {
         if (t.dead) continue;
         if (t.barrier > 0 && Math.hypot(f.x - t.x, f.y - (t.y - 16 * t.sc)) < BAR_R * t.sc + 6) {
           f.dead = true; bossEvent({ t: 'bex', k: 'block', x: f.x, y: f.y }); break;
         }
-        if (tankHit(t, f.x, f.y)) { f.dead = true; fireExplode(f.x, f.y); break; }
+        if (tankHit(t, f.x, f.y) || (f.straight && Math.hypot(f.x - t.x, f.y - (t.y - 6)) < 16)) { f.dead = true; fireExplode(f.x, f.y, f.kind); break; }
       }
       if (f.dead) break;
-      if (f.y >= terrainAt(f.x)) { f.dead = true; fireExplode(f.x, f.y); }
-      else if (f.x < -100 || f.x > W + 100 || f.y > H + 50) f.dead = true;
+      if (f.y >= terrainAt(f.x)) { f.dead = true; fireExplode(f.x, f.y, f.kind); }
+      else if (f.x < -100 || f.x > W + 100 || f.y > H + 50 || f.y < -900) f.dead = true;
     }
   }
   game.fires = game.fires.filter(f => !f.dead);
 }
-function fireExplode(x, y){
+function fireExplode(x, y, kind){
   const ds = [], died = [];
   game.tanks.forEach((t, i) => {
     if (t.dead || t.barrier > 0 || Math.hypot(x - t.x, y - (t.y - 6)) >= FIRE_R) return;
     ds.push(i); if (damageTank(i)) died.push(i);
   });
-  bossEvent({ t: 'bex', k: 'fire', x, y, ds, died });
+  bossEvent({ t: 'bex', k: 'fire', x, y, ds, died, c: KINDS.indexOf(kind) });
 }
 function bossEnd(){
   const rank = game.tanks.map(t => [t.name, t.color, t.hits, t.ghost ? 1 : 0]);
-  if (isHost()) netSend({ t: 'bover', rank });
-  bossFinish(rank);
+  const totals = game.totals.map((v, i) => v + game.tanks[i].hits);   // 合計は全員分を数える
+  if (isHost()) netSend({ t: 'bover', rank, totals });
+  bossFinish(rank, totals);
 }
-function bossFinish(rank){
+function bossFinish(rank, totals){
   if (game.phase === 'over') return;
-  const g = game, d = game.dragon;
-  game.phase = 'over'; game.rank = rank; d.dead = true; d.hp = 0; game.fires = []; game.fireQueue = []; game.lasers = [];
-  setMsg('ドラゴンを倒した！', 'info');
+  const g = game, d = game.boss, def = bossDef(), last = d.idx === BOSSES.length - 1;
+  game.phase = 'over'; game.rank = rank; game.totals = totals; d.dead = true; d.hp = 0;
+  game.fires = []; game.fireQueue = []; game.lasers = [];
+  setMsg(`${def.name} を倒した！`, 'info');
   for (let i = 0; i < 8; i++) setTimeout(() => {
     if (game !== g) return;
-    explosionParts(d.x + rnd(-150, 150), d.gy + rnd(-280, -40), 2); sfx.boom(2); game.shake = 18;
+    explosionParts(d.x + rnd(-150, 150), d.gy + def.topY * rnd(.2, .8), 2); sfx.boom(2); game.shake = 18;
   }, i * 280);
-  setTimeout(() => { if (game !== g) return; sfx.win(); showBossResult(); }, 3200);
+  if (last) setTimeout(() => { if (game === g) { setMsg('🎆 全ボス撃破！ おめでとう！', 'info'); startFireworks(); } }, 2400);
+  setTimeout(() => { if (game !== g) return; sfx.win(); showBossResult(); }, last ? 6500 : 3200);
+}
+
+// ---------- 花火（3体目撃破後） ----------
+const FW_COLORS = ['#f87171', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6', '#fde047', '#ffffff'];
+function startFireworks(){ game.fwT = 14; game.fwNext = 0; }
+function updateFireworks(dt){
+  if (game.fwT > 0) {
+    game.night = Math.min(.8, (game.night || 0) + dt * .6);
+    game.fwT -= dt; game.fwNext -= dt;
+    if (game.fwNext <= 0) {
+      game.fwNext = rnd(.18, .45);
+      const x = rnd(200, W - 200);
+      game.parts.push({ rocket: true, x, y: H - 20, vx: rnd(-40, 40), vy: -rnd(620, 780), life: 4, max: 4, size: 3.5, color: '#fff7d6', g: 380 });
+      tone(500, .6, 'sine', .04, 0, 1400);
+    }
+  }
+  for (const p of game.parts) {
+    if (!p.rocket || p.life <= 0) continue;
+    game.parts.push({ x: p.x, y: p.y, vx: rnd(-20, 20), vy: rnd(10, 60), life: rnd(.2, .45), max: .45, size: 2, color: '#ffd166', g: 60 });
+    if (p.vy > -40) {   // 頂点で破裂
+      p.life = 0;
+      const c1 = FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)], c2 = FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)];
+      const n = 90, sp = rnd(200, 340);
+      for (let i = 0; i < n; i++) {
+        const a = i / n * Math.PI * 2, v = sp * rnd(.85, 1.05);
+        game.parts.push({ x: p.x, y: p.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(1.4, 2.2), max: 2.2, size: rnd(3.5, 5.5), color: i % 3 ? c1 : c2, g: 110 });
+      }
+      game.parts.push({ ring: true, x: p.x, y: p.y, r: 4, R: sp * .5, life: .35, max: .35 });
+      noise(.6, .35, 2600); tone(180, .25, 'sine', .15, 0, 60);
+    }
+  }
 }
 
 // ---------- 演出 ----------
+const DIED_MSG = 'やられた！ 3秒後にグレーで復活します（このボスではランク外になります）';
 function applyBossFx(ev){
-  const { x, y } = ev, d = game.dragon;
+  const { x, y } = ev, d = game.boss;
   switch (ev.k) {
     case 'ground':
       if (ev.b) crater(x, y, CRATER_R);
       explosionParts(x, y, ev.b ? 1 : 0); sfx.boom(ev.b ? 1 : 0);
       break;
-    case 'dragon': {
+    case 'dragon': {   // ボスに命中
       d.flash = .15; explosionParts(x, y, ev.b ? 1 : 0); sfx.boom(ev.b ? 1 : 0);
       const t = game.tanks[ev.o];
       addFloat(`-${ev.dm}`, x, y - 20, t ? t.color : '#fff');
@@ -2228,29 +2394,28 @@ function applyBossFx(ev){
     }
     case 'roar':
       sfx.roar(); game.shake = 14;
-      addFloat('🔥 全周囲ブレス！', x, y, '#ff9f1c');
+      addFloat(ev.text, x, y, '#ff9f1c');
       break;
+    case 'flap': d.flapT = 1.3; sfx.flap(); break;
     case 'block':
       sfx.block();
       for (let i = 0; i < 12; i++) { const a = rnd(0, Math.PI * 2), v = rnd(60, 180);
         game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(.2, .5), max: .5, size: rnd(2, 4), color: '#a5f3fc', g: 0 }); }
       break;
-    case 'fire':
+    case 'fire': {
+      const col = TRAIL_COL[KINDS[ev.c]] || TRAIL_COL.fire;
       noise(.35, .3, 1400);
       for (let i = 0; i < 22; i++) { const a = rnd(0, Math.PI * 2), v = rnd(40, 200);
-        game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: rnd(.3, .7), max: .7, size: rnd(3, 7),
-          color: ['#fff3b0', '#ffb703', '#ff5400'][i % 3], g: 200 }); }
+        game.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: rnd(.3, .7), max: .7, size: rnd(3, 7), color: col[i % 3], g: 200 }); }
       game.parts.push({ ring: true, x, y, r: 3, R: FIRE_R * 1.6, life: .3, max: .3 });
-      for (const i of ev.ds) { const t = game.tanks[i]; t.flash = .5; addFloat(`-${FIRE_DMG}`, t.x, t.y - 44, '#ff6b6b'); }
-      for (const i of ev.died) {
-        const t = game.tanks[i]; explosionParts(t.x, t.y - 6, 0); sfx.boom(1);
-        if (i === game.mySide) setMsg('やられた！ 3秒後にグレーで復活します（ランク外になります）', 'bad');
-      }
+      hitTanksFx(ev);
       break;
+    }
     case 'laser': {
       const a2 = ev.a2 == null ? ev.a : ev.a2, dur = ev.dur || LASER_LIFE;
-      const L = Object.assign({ h: ev.h, a: ev.a, a2, dur, charge: LASER_CHARGE, life: dur, hit: [] }, laserPath(ev.h, ev.a));
-      if (a2 !== ev.a) L.end = laserPath(ev.h, a2);
+      const L = Object.assign({ h: ev.h, f: ev.f || 0, a: ev.a, a2, dur, c: ev.c || 'fire', charge: LASER_CHARGE, life: dur, hit: [] }, laserPath(ev.h, ev.a, ev.f));
+      if (a2 !== ev.a) L.end = laserPath(ev.h, a2, ev.f);
+      if (d.type === 'cerb' && ev.h === 1 && ev.f) d.midF = ev.f;
       game.lasers.push(L); sfx.charge();
       break;
     }
@@ -2264,25 +2429,23 @@ function applyBossFx(ev){
       if (ev.h === 0) addFloat('触手を破壊！', t.x, t.base - 40, '#c084fc');
       break;
     }
-    case 'rage':
+    case 'rage': {
+      const nm = bossDef().short;
       d.stage = ev.s; sfx.roar(); game.shake = 18;
-      addFloat(ev.s === 2 ? '🔥 ドラゴンが激怒した！' : '😡 ドラゴンが怒った！', x, y - 30, ev.s === 2 ? '#ef4444' : '#fb923c');
-      setMsg(ev.s === 2 ? 'ドラゴンが激怒！ 攻撃がさらに激しくなる！' : 'ドラゴンが怒った！ 攻撃が激しくなる！', 'bad');
-      for (let i = 0; i < 4; i++) { const m = mouthPos(i);
+      addFloat(ev.s === 2 ? `🔥 ${nm}が激怒した！` : `😡 ${nm}が怒った！`, x, y - 30, ev.s === 2 ? '#ef4444' : '#fb923c');
+      setMsg(ev.s === 2 ? `${nm}が激怒！ 攻撃がさらに激しくなる！` : `${nm}が怒った！ 攻撃が激しくなる！`, 'bad');
+      for (let i = 0; i < d.glow.length; i++) { const m = emitPoint(i, 1);
         for (let k = 0; k < 10; k++) game.parts.push({ x: m.x, y: m.y, vx: rnd(-40, 40), vy: rnd(-90, -30), life: rnd(.8, 1.5), max: 1.5,
           size: rnd(8, 16), color: '#4b5563', g: -10, smoke: true }); }
       break;
+    }
     case 'lhit':
       for (const i of ev.blk) {
         const t = game.tanks[i]; sfx.block();
         for (let k = 0; k < 12; k++) { const a = rnd(0, Math.PI * 2), v = rnd(60, 180);
           game.parts.push({ x: t.x, y: t.y - 16 * t.sc, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(.2, .5), max: .5, size: rnd(2, 4), color: '#a5f3fc', g: 0 }); }
       }
-      for (const i of ev.ds) { const t = game.tanks[i]; t.flash = .5; addFloat(`-${FIRE_DMG}`, t.x, t.y - 44, '#ff6b6b'); }
-      for (const i of ev.died) {
-        const t = game.tanks[i]; explosionParts(t.x, t.y - 6, 0); sfx.boom(1);
-        if (i === game.mySide) setMsg('やられた！ 3秒後にグレーで復活します（ランク外になります）', 'bad');
-      }
+      hitTanksFx(ev);
       break;
     case 'revive': {
       const t = game.tanks[ev.i];
@@ -2292,15 +2455,31 @@ function applyBossFx(ev){
     }
   }
 }
-function drawDragon(now){
-  const d = game.dragon, X = d.x, Y = d.gy;
-  ctx.save();
-  ctx.translate(X, Y + (d.dead ? Math.min(70, d.deadT * 25) : 0));
+function hitTanksFx(ev){
+  for (const i of ev.ds) { const t = game.tanks[i]; t.flash = .5; addFloat(`-${FIRE_DMG}`, t.x, t.y - 44, '#ff6b6b'); }
+  for (const i of ev.died) {
+    const t = game.tanks[i]; explosionParts(t.x, t.y - 6, 0); sfx.boom(1);
+    if (i === game.mySide) setMsg(DIED_MSG, 'bad');
+  }
+}
+
+// ---------- ボスの描画 ----------
+function drawBoss(now){
+  const d = game.boss;
+  if (d.type === 'moth') drawMoth(now); else if (d.type === 'cerb') drawCerb(now); else drawDragon(now);
+}
+function bossFilter(d){
   if (d.dead) ctx.filter = 'grayscale(1) brightness(.45)';
   else if (d.flash > 0) ctx.filter = 'brightness(2.2)';
+}
+const EYE_COL = ['#fde047', '#fb923c', '#ef4444'];
+function drawDragon(now){
+  const d = game.boss, X = d.x, Y = d.gy;
+  ctx.save();
+  ctx.translate(X, Y + (d.dead ? Math.min(70, d.deadT * 25) : 0));
+  bossFilter(d);
   const breath = Math.sin(now * 2) * 3;
-  // 翼
-  for (const s of [-1, 1]) {
+  for (const s of [-1, 1]) {   // 翼
     const flap = Math.sin(now * 2.2) * 12;
     ctx.fillStyle = '#5b21b6';
     ctx.beginPath(); ctx.moveTo(s * 40, -125);
@@ -2312,21 +2491,17 @@ function drawDragon(now){
     ctx.strokeStyle = '#3b0764'; ctx.lineWidth = 3; ctx.beginPath();
     ctx.moveTo(s * 40, -125); ctx.lineTo(s * 232, -130); ctx.moveTo(s * 40, -125); ctx.lineTo(s * 166, -100); ctx.stroke();
   }
-  // 尾
-  ctx.strokeStyle = '#15803d'; ctx.lineWidth = 22; ctx.lineCap = 'round';
+  ctx.strokeStyle = '#15803d'; ctx.lineWidth = 22; ctx.lineCap = 'round';   // 尾
   ctx.beginPath(); ctx.moveTo(60, -40); ctx.quadraticCurveTo(170, -8, 205, -42 + Math.sin(now * 3) * 8); ctx.stroke();
-  // 脚
-  ctx.fillStyle = '#14532d';
+  ctx.fillStyle = '#14532d';   // 脚
   for (const lx of [-72, -30, 30, 72]) { rr(lx - 14, -48, 28, 48, 8); ctx.fill(); }
-  // 胴体
-  const g = ctx.createRadialGradient(-30, -120, 20, 0, DR_BODY.y, 140);
+  const g = ctx.createRadialGradient(-30, -120, 20, 0, DR_BODY.y, 140);   // 胴体
   g.addColorStop(0, '#22c55e'); g.addColorStop(1, '#14532d');
   ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, DR_BODY.y, DR_BODY.rx, DR_BODY.ry + breath, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(253,230,138,.55)'; ctx.beginPath(); ctx.ellipse(0, -55, 72, 34, 0, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(146,64,14,.35)'; ctx.lineWidth = 2;
   for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(-60 + (i + 2) * 3, -55 + i * 12); ctx.lineTo(60 - (i + 2) * 3, -55 + i * 12); ctx.stroke(); }
-  // 首と頭
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 4; i++) {   // 首と頭
     const [nx, ny] = DR_NECKS[i], sw = headSway(i, now), f = i < 2 ? -1 : 1;
     const hx = DR_HEADS[i][0] + sw.x, hy = DR_HEADS[i][1] + sw.y;
     ctx.lineCap = 'round';
@@ -2349,26 +2524,143 @@ function drawDragonHead(x, y, f, glow, now, i){
   ctx.fillStyle = '#7f1d1d'; ctx.beginPath(); ctx.ellipse(32, 13 + open / 2, 16, open, .15, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#fff';
   for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(22 + k * 8, 12); ctx.lineTo(25 + k * 8, 17); ctx.lineTo(28 + k * 8, 12); ctx.fill(); }
-  const st = game.dragon.stage;
+  drawEye(6, -6, 6.5, 5);
+  ctx.fillStyle = '#7f1d1d'; ctx.fillRect(5, -10, 2.5, 8);
+  if (glow > 0) mouthGlow(46, 12, 34, 'fire');
+  ctx.restore();
+}
+function drawEye(x, y, rx, ry, cols = EYE_COL){
+  const st = game.boss.stage;
   ctx.save();
   if (st > 0) { ctx.shadowColor = st === 2 ? '#ef4444' : '#fb923c'; ctx.shadowBlur = 10 + st * 6; }
-  ctx.fillStyle = ['#fde047', '#fb923c', '#ef4444'][st]; ctx.beginPath(); ctx.ellipse(6, -6, 6.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = cols[st]; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
-  ctx.fillStyle = '#7f1d1d'; ctx.fillRect(5, -10, 2.5, 8);
-  if (glow > 0) {
-    const gg = ctx.createRadialGradient(46, 12, 0, 46, 12, 34);
-    gg.addColorStop(0, 'rgba(255,247,174,.95)'); gg.addColorStop(.5, 'rgba(255,159,28,.6)'); gg.addColorStop(1, 'rgba(255,84,0,0)');
-    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(46, 12, 34, 0, Math.PI * 2); ctx.fill();
+}
+function mouthGlow(x, y, r, kind){
+  const gg = ctx.createRadialGradient(x, y, 0, x, y, r);
+  if (kind === 'red') { gg.addColorStop(0, 'rgba(255,220,220,.95)'); gg.addColorStop(.5, 'rgba(239,68,68,.65)'); gg.addColorStop(1, 'rgba(185,28,28,0)'); }
+  else { gg.addColorStop(0, 'rgba(255,247,174,.95)'); gg.addColorStop(.5, 'rgba(255,159,28,.6)'); gg.addColorStop(1, 'rgba(255,84,0,0)'); }
+  ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+}
+// 巨大蛾（空中に浮かぶ）
+function drawMoth(now){
+  const d = game.boss, X = d.x, baseY = d.gy + MOTH_Y;
+  const fall = d.dead ? Math.min(-MOTH_Y - 120, d.deadT * d.deadT * 160) : 0;
+  const Y = baseY + Math.sin(now * 1.4) * 10 + fall;
+  ctx.save(); ctx.translate(X, Y); bossFilter(d);
+  const fast = d.flapT > 0, ph = now * (fast ? 18 : 3.2), amp = fast ? .38 : .1;
+  const k = 1 - amp * (.5 + .5 * Math.sin(ph));   // 羽の縦方向の縮み（羽ばたき）
+  for (const s of [-1, 1]) {
+    // 下羽
+    ctx.save(); ctx.translate(s * 12, -10); ctx.scale(s, k);
+    let g = ctx.createLinearGradient(0, 0, 190, 140); g.addColorStop(0, '#d97706'); g.addColorStop(1, '#92400e');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 20); ctx.bezierCurveTo(80, 20, 200, 60, 190, 130); ctx.bezierCurveTo(140, 175, 40, 125, 0, 60); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#451a03'; ctx.lineWidth = 6; ctx.stroke();
+    eyeSpot(120, 88, 22);
+    ctx.restore();
+    // 上羽
+    ctx.save(); ctx.translate(s * 12, -40); ctx.scale(s, 2 - k - (fast ? .25 : 0));
+    g = ctx.createLinearGradient(0, -100, 255, 0); g.addColorStop(0, '#fbbf24'); g.addColorStop(.6, '#f59e0b'); g.addColorStop(1, '#b45309');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(60, -110, 200, -125, 258, -72); ctx.bezierCurveTo(252, -10, 180, 42, 0, 30); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#451a03'; ctx.lineWidth = 7; ctx.stroke();
+    ctx.strokeStyle = 'rgba(69,26,3,.55)'; ctx.lineWidth = 3;   // 翅脈と黒い模様
+    for (const [ex, ey] of [[210, -95], [235, -45], [180, 10]]) { ctx.beginPath(); ctx.moveTo(10, 0); ctx.quadraticCurveTo(ex * .5, ey * .6 - 10, ex, ey); ctx.stroke(); }
+    ctx.fillStyle = '#1c1917';
+    for (const [px, py, r] of [[230, -68, 9], [215, -30, 7], [95, -60, 8]]) { ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); }
+    eyeSpot(150, -42, 30);
+    ctx.restore();
   }
+  // 胴体（しま模様）
+  ctx.fillStyle = '#78350f'; ctx.beginPath(); ctx.ellipse(0, 22, 30, 90, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 5;
+  for (let i = 0; i < 5; i++) { const yy = -10 + i * 22, w = 26 - Math.abs(i - 1.5) * 4; ctx.beginPath(); ctx.moveTo(-w, yy); ctx.quadraticCurveTo(0, yy + 8, w, yy); ctx.stroke(); }
+  // ふわふわの胸
+  ctx.fillStyle = '#fef3c7';
+  for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; ctx.beginPath(); ctx.arc(Math.cos(a) * 26, -48 + Math.sin(a) * 18, 12, 0, Math.PI * 2); ctx.fill(); }
+  ctx.beginPath(); ctx.arc(0, -48, 28, 0, Math.PI * 2); ctx.fill();
+  // 触角
+  ctx.strokeStyle = '#451a03'; ctx.lineWidth = 3;
+  for (const s of [-1, 1]) {
+    const tx = s * 62, ty = -192 + Math.sin(now * 2 + s) * 4;
+    ctx.beginPath(); ctx.moveTo(s * 8, -118); ctx.quadraticCurveTo(s * 20, -170, tx, ty); ctx.stroke();
+    ctx.lineWidth = 1.5;
+    for (let j = 1; j < 8; j++) { const u = j / 8, ax = s * 8 + (tx - s * 8) * u, ay = -118 + (ty + 118) * u;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + s * 10, ay - 6); ctx.moveTo(ax, ay); ctx.lineTo(ax - s * 6, ay - 9); ctx.stroke(); }
+    ctx.lineWidth = 3;
+  }
+  // 頭と複眼
+  ctx.fillStyle = '#44403c'; ctx.beginPath(); ctx.arc(0, -98, 30, 0, Math.PI * 2); ctx.fill();
+  for (const s of [-1, 1]) drawEye(s * 15, -102, 13, 13, ['#38bdf8', '#fb923c', '#ef4444']);
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * 15 - 4, -107, 3.5, 0, Math.PI * 2); ctx.fill(); }
+  if (d.glow[0] > 0) mouthGlow(0, -76, 32, 'red');
+  ctx.restore();
+}
+function eyeSpot(x, y, r){   // 羽の目玉模様
+  ctx.fillStyle = '#1c1917'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.arc(x, y, r * .72, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1d4ed8'; ctx.beginPath(); ctx.arc(x, y, r * .45, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x - r * .15, y - r * .15, r * .14, 0, Math.PI * 2); ctx.fill();
+}
+// ケルベロス（頭が3つのドーベルマン）
+function drawCerb(now){
+  const d = game.boss, X = d.x, Y = d.gy;
+  ctx.save(); ctx.translate(X, Y + (d.dead ? Math.min(50, d.deadT * 20) : 0)); bossFilter(d);
+  const breath = Math.sin(now * 2.4) * 2;
+  // 尾
+  ctx.strokeStyle = '#111827'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(80, -90); ctx.quadraticCurveTo(110, -110, 108 + Math.sin(now * 6) * 6, -140); ctx.stroke();
+  // 脚と足先（茶色）
+  for (const lx of [-72, -30, 30, 72]) {
+    ctx.fillStyle = '#0f172a'; rr(lx - 13, -55, 26, 55, 9); ctx.fill();
+    ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.ellipse(lx, -5, 15, 8, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // 胴体
+  const g = ctx.createRadialGradient(-30, -100, 10, 0, CB_BODY.y, 120);
+  g.addColorStop(0, '#374151'); g.addColorStop(1, '#0b0f19');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, CB_BODY.y, CB_BODY.rx, CB_BODY.ry + breath, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.ellipse(0, -52, 42, 26, 0, 0, Math.PI * 2); ctx.fill();   // 胸の茶色
+  // 首・首輪・頭
+  for (let i = 0; i < 3; i++) {
+    const [nx, ny] = CB_NECKS[i], sw = headSway(i, now), f = i === 0 ? -1 : i === 2 ? 1 : d.midF;
+    const hx = CB_HEADS[i][0] + sw.x * .6, hy = CB_HEADS[i][1] + sw.y * .6;
+    ctx.strokeStyle = '#111827'; ctx.lineWidth = 26; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(nx, ny); ctx.quadraticCurveTo((nx + hx) / 2 - f * 6, (ny + hy) / 2, hx, hy + 10); ctx.stroke();
+    const cx = nx + (hx - nx) * .62, cy = ny + (hy - ny) * .62;   // 赤い首輪とトゲ
+    ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#e5e7eb';
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2 + .3; ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 16, cy + Math.sin(a) * 16); ctx.lineTo(cx + Math.cos(a + .2) * 26, cy + Math.sin(a + .2) * 26); ctx.lineTo(cx + Math.cos(a + .4) * 16, cy + Math.sin(a + .4) * 16); ctx.fill(); }
+    drawCerbHead(hx, hy, f, d.glow[i], now, i);
+  }
+  ctx.restore();
+}
+function drawCerbHead(x, y, f, glow, now, i){
+  ctx.save(); ctx.translate(x, y); ctx.scale(f, 1);
+  ctx.fillStyle = '#0f172a';   // 立った耳
+  ctx.beginPath(); ctx.moveTo(-14, -12); ctx.lineTo(-12, -50); ctx.lineTo(0, -16); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(6, -50); ctx.lineTo(12, -12); ctx.fill();
+  ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.ellipse(0, 0, 25, 21, 0, 0, Math.PI * 2); ctx.fill();   // 頭
+  const open = glow > 0 ? 10 : 2 + Math.sin(now * 4 + i) * 1;
+  ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.ellipse(26, 2, 24, 11, .08, 0, Math.PI * 2); ctx.fill();   // 鼻先
+  ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.ellipse(26, 8 + open * .5, 20, 6 + open * .4, .08, 0, Math.PI * 2); ctx.fill();   // あご（茶色）
+  ctx.fillStyle = '#7f1d1d'; ctx.beginPath(); ctx.ellipse(30, 9, 14, open * .6, .08, 0, Math.PI * 2); ctx.fill();   // 口の中
+  ctx.fillStyle = '#fff';   // 牙
+  for (const fx of [22, 38]) { ctx.beginPath(); ctx.moveTo(fx, 4); ctx.lineTo(fx + 2.5, 10 + open * .5); ctx.lineTo(fx + 5, 4); ctx.fill(); }
+  ctx.fillStyle = '#b45309'; ctx.beginPath(); ctx.arc(2, -13, 4, 0, Math.PI * 2); ctx.fill();   // まゆの茶色の点
+  drawEye(6, -5, 6, 4.5);
+  ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(49, -1, 6, 5, 0, 0, Math.PI * 2); ctx.fill();   // 鼻
+  ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.beginPath(); ctx.arc(47, -3, 1.6, 0, Math.PI * 2); ctx.fill();
+  if (glow > 0) mouthGlow(48, 10, 30, 'red');
   ctx.restore();
 }
 function drawLasers(now){
   for (const L of game.lasers) {
+    const red = L.c === 'red';
     ctx.save(); ctx.lineCap = 'round';
     if (L.charge > 0) {   // 予告：点線と口元の光
       const k = clamp(1 - L.charge / LASER_CHARGE, 0, 1);
       ctx.setLineDash([14, 10]); ctx.lineDashOffset = -now * 120;
-      ctx.strokeStyle = `rgba(255,80,40,${.35 + .4 * k * (Math.sin(now * 30) * .5 + .5)})`; ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(255,${red ? 40 : 80},40,${.35 + .4 * k * (Math.sin(now * 30) * .5 + .5)})`; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
       if (L.end) {   // なぎ払いは終わりの射線と範囲も予告
         ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.end.x1, L.end.y1); ctx.stroke();
@@ -2376,15 +2668,13 @@ function drawLasers(now){
         ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.lineTo(L.end.x1, L.end.y1); ctx.closePath(); ctx.fill();
       }
       ctx.setLineDash([]);
-      const g = ctx.createRadialGradient(L.x0, L.y0, 0, L.x0, L.y0, 10 + 26 * k);
-      g.addColorStop(0, 'rgba(255,255,230,.95)'); g.addColorStop(.5, 'rgba(255,150,40,.7)'); g.addColorStop(1, 'rgba(255,60,0,0)');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(L.x0, L.y0, 10 + 26 * k, 0, Math.PI * 2); ctx.fill();
+      mouthGlow(L.x0, L.y0, 10 + 26 * k, red ? 'red' : 'fire');
     } else {   // 照射
       const k = clamp(L.dur === LASER_LIFE ? L.life / L.dur : Math.min(1, L.life / .4), 0, 1), w = LASER_W * (0.6 + 0.4 * k) + Math.sin(now * 60) * 2;
-      ctx.shadowColor = '#ff5400'; ctx.shadowBlur = 30;
-      ctx.strokeStyle = `rgba(255,90,20,${.75 * k + .2})`; ctx.lineWidth = w * 2;
+      ctx.shadowColor = red ? '#ef4444' : '#ff5400'; ctx.shadowBlur = 30;
+      ctx.strokeStyle = red ? `rgba(220,20,20,${.75 * k + .2})` : `rgba(255,90,20,${.75 * k + .2})`; ctx.lineWidth = w * 2;
       ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
-      ctx.shadowBlur = 0; ctx.strokeStyle = `rgba(255,220,120,${k})`; ctx.lineWidth = w;
+      ctx.shadowBlur = 0; ctx.strokeStyle = red ? `rgba(255,120,120,${k})` : `rgba(255,220,120,${k})`; ctx.lineWidth = w;
       ctx.stroke();
       ctx.strokeStyle = `rgba(255,255,255,${k})`; ctx.lineWidth = w * .35; ctx.stroke();
     }
@@ -2412,11 +2702,9 @@ function drawTentacles(now){
     pts.forEach((p, k) => k ? ctx.lineTo(p.x - p.w, p.y) : ctx.moveTo(p.x - p.w, p.y));
     for (let k = n; k >= 0; k--) ctx.lineTo(pts[k].x + pts[k].w, pts[k].y);
     ctx.closePath(); ctx.fill();
-    // 吸盤（戦車側）
-    ctx.fillStyle = 'rgba(251,207,232,.8)';
+    ctx.fillStyle = 'rgba(251,207,232,.8)';   // 吸盤（戦車側）
     for (let k = 1; k < n; k += 2) { const p = pts[k]; ctx.beginPath(); ctx.arc(p.x + t.sd * p.w * .55, p.y, Math.max(1.5, p.w * .3), 0, Math.PI * 2); ctx.fill(); }
-    // 先端：無傷なら丸まった先、削られていれば切り口
-    const tip = pts[n];
+    const tip = pts[n];   // 先端：無傷なら丸まった先、削られていれば切り口
     if (t.h >= t.max) {
       ctx.strokeStyle = '#a855f7'; ctx.lineWidth = tip.w * 2; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.arc(tip.x - t.sd * 8, tip.y, 8, 0, Math.PI * 1.3 * t.sd, t.sd < 0); ctx.stroke();
@@ -2429,11 +2717,35 @@ function drawTentacles(now){
 }
 function drawFires(now){
   for (const f of game.fires) {
-    const r = 12 + Math.sin(now * 30 + f.id) * 2;
+    const k = f.kind || 'fire';
+    if (k === 'wave' || k === 'fang') {   // まっすぐ飛ぶ弾は進行方向に向けて描く
+      const a = f.a != null ? f.a : Math.atan2(f.vy, f.vx);
+      ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(a);
+      ctx.shadowColor = k === 'wave' ? '#67e8f9' : '#ef4444'; ctx.shadowBlur = 18;
+      if (k === 'wave') {   // 半月型の刃
+        ctx.fillStyle = 'rgba(224,242,254,.92)';
+        ctx.beginPath(); ctx.arc(-8, 0, 26, -1.25, 1.25); ctx.arc(-20, 0, 22, 1.1, -1.1, true); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(103,232,249,.9)'; ctx.lineWidth = 2; ctx.stroke();
+      } else {   // 上下の牙が噛み合う
+        const bite = (Math.sin(now * 22 + f.id) * .5 + .5) * 7;
+        ctx.fillStyle = '#fff';
+        for (const s of [-1, 1]) for (let j = 0; j < 3; j++) {
+          ctx.beginPath(); ctx.moveTo(-14 + j * 12, s * (16 + bite)); ctx.lineTo(-8 + j * 12, s * (2 + bite * .3)); ctx.lineTo(-2 + j * 12, s * (16 + bite)); ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(239,68,68,.8)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(-6, 0, 22, -1.2, 1.2); ctx.stroke();
+      }
+      ctx.restore();
+      continue;
+    }
+    const cols = { fire: ['#fff7ae', '#ffb703', 'rgba(255,84,0,.65)', 'rgba(255,40,0,0)'],
+                   red: ['#fee2e2', '#ef4444', 'rgba(185,28,28,.7)', 'rgba(127,29,29,0)'],
+                   scale: ['#fefce8', '#fde047', 'rgba(250,204,21,.6)', 'rgba(234,179,8,0)'] }[k] || [];
+    const r = (k === 'scale' ? 8 : 12) + Math.sin(now * 30 + f.id) * 2;
     const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r * 1.8);
-    g.addColorStop(0, '#fff7ae'); g.addColorStop(.35, '#ffb703'); g.addColorStop(.7, 'rgba(255,84,0,.65)'); g.addColorStop(1, 'rgba(255,40,0,0)');
+    g.addColorStop(0, cols[0]); g.addColorStop(.35, cols[1]); g.addColorStop(.7, cols[2]); g.addColorStop(1, cols[3]);
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, r * 1.8, 0, Math.PI * 2); ctx.fill();
-    if (f.y < 0) { ctx.fillStyle = 'rgba(255,120,0,.95)'; ctx.beginPath(); ctx.moveTo(f.x, 6); ctx.lineTo(f.x - 9, 22); ctx.lineTo(f.x + 9, 22); ctx.fill(); }
+    if (f.y < 0) { ctx.fillStyle = cols[1]; ctx.beginPath(); ctx.moveTo(f.x, 6); ctx.lineTo(f.x - 9, 22); ctx.lineTo(f.x + 9, 22); ctx.fill(); }
   }
 }
 function drawBossHUD(now){
@@ -2441,14 +2753,17 @@ function drawBossHUD(now){
   ctx.save(); ctx.translate(18, 14); ctx.scale(HUD_K, HUD_K);
   drawHudPanel(me, me.name + (lbl ? ` [${lbl}]` : ''), game.mySide, now);
   ctx.restore();
-  // ドラゴンの耐久力
-  const d = game.dragon, bw = 760, bx = W / 2 - bw / 2;
+  // ボスの耐久力
+  const d = game.boss, def = bossDef(), bw = 760, bx = W / 2 - bw / 2;
   ctx.fillStyle = 'rgba(8,12,24,.6)'; rr(bx - 18, 10, bw + 36, 100, 14); ctx.fill();
   ctx.font = 'bold 26px "Segoe UI","Meiryo",sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fca5a5';
-  ctx.fillText('🐉 DRAGON', bx, 40);
+  ctx.fillText(`${def.name}`, bx, 40);
+  ctx.font = 'bold 18px "Segoe UI","Meiryo",sans-serif'; ctx.fillStyle = '#cbd5f0';
+  ctx.fillText(`BOSS ${d.idx + 1}/${BOSSES.length}`, bx + ctx.measureText(def.name).width * 26 / 18 + 18, 40);
+  ctx.font = 'bold 26px "Segoe UI","Meiryo",sans-serif';
   if (d.stage > 0) {
     ctx.textAlign = 'center'; ctx.fillStyle = d.stage === 2 ? '#ef4444' : '#fb923c';
-    ctx.fillText(d.stage === 2 ? '🔥 激怒' : '😡 怒り', W / 2, 40); ctx.textAlign = 'left';
+    ctx.fillText(d.stage === 2 ? '🔥 激怒' : '😡 怒り', W / 2 + 90, 40);
   }
   ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.fillText(`${d.hp} / ${d.max}`, bx + bw, 40);
   ctx.fillStyle = '#111827'; rr(bx, 50, bw, 28, 8); ctx.fill();
@@ -2457,7 +2772,7 @@ function drawBossHUD(now){
     ctx.fillStyle = g; rr(bx, 50, bw * d.hp / d.max, 28, 8); ctx.fill();
   }
   ctx.textAlign = 'center'; ctx.font = '17px "Segoe UI","Meiryo",sans-serif'; ctx.fillStyle = '#fdba74';
-  ctx.fillText(`全周囲ブレスまで あと ${BARRAGE_EVERY - d.hitN % BARRAGE_EVERY} 発`, W / 2, 100);
+  ctx.fillText(`${def.special}まで あと ${BARRAGE_EVERY - d.hitN % BARRAGE_EVERY} 発`, W / 2, 100);
   // 命中数ボード
   const rows = game.tanks.map((t, i) => ({ t, i })).sort((a, b) => b.t.hits - a.t.hits);
   const SW = 300, K = 1.3;
@@ -2475,7 +2790,7 @@ function drawBossHUD(now){
   });
   ctx.restore();
   let banner = null;
-  if (game.phase === 'ready') banner = game.readyT > 1 ? 'READY' : 'SET';
+  if (game.phase === 'ready') banner = game.readyT > 1 ? `BOSS ${d.idx + 1}` : 'READY';
   else if (game.goT > 0) banner = 'GO!';
   if (banner) {
     ctx.textAlign = 'center'; ctx.font = '900 120px "Segoe UI",sans-serif';
@@ -2483,22 +2798,57 @@ function drawBossHUD(now){
     ctx.fillStyle = '#ffd166'; ctx.fillText(banner, W / 2, 470);
   }
 }
+
+// ---------- 結果画面 ----------
 const pchip = r => `<span class="pchip"><i style="background:${r.ghost ? '#9ca3af' : r.color}"></i>${esc(r.name)}</span>`;
-function showBossResult(){
-  const rows = game.rank.map((r, i) => ({ name: r[0], color: r[1], hits: r[2], ghost: !!r[3], me: i === game.mySide }));
-  const ranked = rows.filter(r => !r.ghost).sort((a, b) => b.hits - a.hits);
-  const out = rows.filter(r => r.ghost).sort((a, b) => b.hits - a.hits);
-  const medal = ['🥇', '🥈', '🥉'];
+const MEDAL = ['🥇', '🥈', '🥉'];
+function rankRows(rows, outRows = []){   // 同点は同順位
   let html = '<tr><th>順位</th><th>なまえ</th><th>命中数</th></tr>', prev = null, rk = 0;
-  ranked.forEach((r, i) => {
+  rows.sort((a, b) => b.hits - a.hits).forEach((r, i) => {
     if (r.hits !== prev) { rk = i + 1; prev = r.hits; }
-    html += `<tr class="${r.me ? 'me' : ''}"><td>${medal[rk - 1] || ''} ${rk}位</td><td>${pchip(r)}</td><td>${r.hits}</td></tr>`;
+    html += `<tr class="${r.me ? 'me' : ''}"><td>${MEDAL[rk - 1] || ''} ${rk}位</td><td>${pchip(r)}</td><td>${r.hits}</td></tr>`;
   });
-  out.forEach(r => { html += `<tr class="out ${r.me ? 'me' : ''}"><td>ランク外</td><td>${pchip(r)}</td><td>${r.hits}</td></tr>`; });
-  $('rankTable').innerHTML = html;
-  const canAgain = game.role !== 'guest';
-  $('btnBossAgain').disabled = !canAgain;
-  $('bossResStatus').textContent = canAgain ? '' : 'ホストが「もう一度」を押すと次の戦いが始まります';
+  outRows.sort((a, b) => b.hits - a.hits).forEach(r => { html += `<tr class="out ${r.me ? 'me' : ''}"><td>ランク外</td><td>${pchip(r)}</td><td>${r.hits}</td></tr>`; });
+  return html;
+}
+function totalRows(){
+  return game.tanks.map((t, i) => ({ name: t.name, color: t.color, hits: game.totals[i], ghost: false, me: i === game.mySide }));
+}
+function setBossButtons(list){   // 表示するボタンだけ出す
+  for (const id of ['btnBossNext', 'btnBossEnd', 'btnBossAgain', 'btnBossTop']) $(id).style.display = list.includes(id) ? '' : 'none';
+}
+function showBossResult(){
+  const d = game.boss, def = bossDef(), last = d.idx === BOSSES.length - 1, lead = game.role !== 'guest';
+  const rows = game.rank.map((r, i) => ({ name: r[0], color: r[1], hits: r[2], ghost: !!r[3], me: i === game.mySide }));
+  $('bossResTitle').textContent = last ? '🎆 全ボス撃破！ おめでとう！' : `${def.name} を倒した！`;
+  $('bossResSub').textContent = `${def.name} に当てた数のランキング（榴弾は1発で2発分）。やられてグレーで復活した人はランク外です`;
+  $('rankHead').textContent = `${def.name} のランキング`;
+  $('rankTable').innerHTML = rankRows(rows.filter(r => !r.ghost), rows.filter(r => r.ghost));
+  $('rankWrap').style.display = '';
+  $('totalWrap').style.display = last ? '' : 'none';
+  if (last) $('totalTable').innerHTML = rankRows(totalRows());
+  $('ovBossRes').classList.toggle('final', last);
+  if (last) {
+    setBossButtons(lead ? ['btnBossAgain', 'btnBossTop'] : ['btnBossTop']);
+    $('bossResStatus').textContent = lead ? '' : 'ホストが「もう一度」を押すと1体目から再挑戦します';
+  } else {
+    setBossButtons(lead ? ['btnBossNext', 'btnBossEnd'] : ['btnBossTop']);
+    $('btnBossNext').textContent = `次のボスへ：${BOSSES[d.idx + 1].name}`;
+    $('bossResStatus').textContent = lead ? '同じメンバーで次のボスに進むか、ここで終了するかを選んでください'
+                                          : 'ホストが「次のボスへ」か「終了」を選ぶのを待っています…';
+  }
+  $('btnBossTop').textContent = lead ? 'トップに戻る' : '抜けてトップに戻る';
+  show('ovBossRes');
+}
+function showTotalResult(){   // 途中で終了したときの合計ランキング
+  $('bossResTitle').textContent = '🏁 ボスチャレンジ終了';
+  $('bossResSub').textContent = `倒したボス：${BOSSES.slice(0, game.bossIdx + 1).map(b => b.name).join(' → ')}`;
+  $('rankWrap').style.display = 'none';
+  $('totalWrap').style.display = '';
+  $('totalTable').innerHTML = rankRows(totalRows());
+  $('ovBossRes').classList.remove('final');
+  setBossButtons(['btnBossTop']); $('btnBossTop').textContent = 'トップに戻る';
+  $('bossResStatus').textContent = '';
   show('ovBossRes');
 }
 
@@ -2558,11 +2908,17 @@ async function bossJoin(){
   });
   peer.on('error', e => bossStatus(e.type === 'peer-unavailable' ? '部屋が見つかりません。コードを確認してください。' : '通信エラー: ' + e.type, true));
 }
-function bossHostStart(){
-  net.players = net.players.filter(p => !p.left); net.started = true;
-  const seed = (Math.random() * 1e9) | 0, roster = net.players.map(p => ({ name: p.name, color: p.color, diff: p.diff }));
-  net.players.forEach((p, i) => { if (p.conn) { p.conn.pidx = i; if (p.conn.open) p.conn.send({ t: 'bstart', seed, roster, you: i }); } });
-  startBoss({ role: 'host', seed, roster, you: 0 });
+function bossHostStart(idx = 0){   // idx=0 は新しい挑戦（1体目から）、それ以外は同じメンバーで次のボスへ
+  let roster, totals;
+  if (idx === 0) {
+    net.players = net.players.filter(p => !p.left); net.started = true;
+    roster = net.players.map(p => ({ name: p.name, color: p.color, diff: p.diff }));
+    net.players.forEach((p, i) => { if (p.conn) p.conn.pidx = i; });
+    net.runRoster = roster; totals = null;
+  } else { roster = net.runRoster; totals = game.totals; }
+  const seed = (Math.random() * 1e9) | 0;
+  net.players.forEach((p, i) => { if (p.conn && p.conn.open) p.conn.send({ t: 'bstart', seed, roster, you: i, idx, totals }); });
+  startBoss({ role: 'host', seed, roster, you: 0, idx, totals });
 }
 function bossConnClosed(c){
   if (!net.isHost || net.closing) return;
@@ -2587,8 +2943,8 @@ function bossSendState(){
     k: game.tanks.map(t => [r1(t.angle), t.hp, t.ammo, r1(t.barrier), r1(t.x), r1(t.alt), r1(t.flyT), t.bombs, t.streak,
                             t.dead ? 1 : 0, t.ghost ? 1 : 0, t.hits]),
     s: game.shells.map(s => [s.id, r1(s.x), r1(s.y), s.bomb ? 1 : 0, s.owner]),
-    f: game.fires.map(f => [f.id, r1(f.x), r1(f.y)]),
-    dh: game.dragon.hp, hn: game.dragon.hitN, th: game.tents.map(t => t.h) });
+    f: game.fires.map(f => [f.id, r1(f.x), r1(f.y), KINDS.indexOf(f.kind), r1(Math.atan2(f.vy, f.vx))]),
+    dh: game.boss.hp, hn: game.boss.hitN, th: game.tents.map(t => t.h) });
 }
 function onBossNet(d, c){
   if (!d || !d.t) return;
@@ -2613,7 +2969,7 @@ function onBossNet(d, c){
     case 'blobby': renderBossPlayers(d.players); bossStatus(`参加者 ${d.players.length} / ${BOSS_MAX} 人　— ホストのスタートを待っています…`); return;
     case 'bfull': bossStatus(d.m, true); $('bossEntry').style.display = ''; netClose(); return;
     case 'bye': bossHostLost(); return;
-    case 'bstart': startBoss({ role: 'guest', seed: d.seed, roster: d.roster, you: d.you }); return;
+    case 'bstart': startBoss({ role: 'guest', seed: d.seed, roster: d.roster, you: d.you, idx: d.idx || 0, totals: d.totals }); return;
   }
   if (!game || game.mode !== 'boss') return;
   switch (d.t) {
@@ -2629,21 +2985,30 @@ function onBossNet(d, c){
         if (o) { trail.push({ x: o.x, y: o.y }); if (trail.length > 8) trail.shift(); }
         return { id, x, y, bomb: !!b, owner, trail };
       });
-      if (game.phase !== 'over') { game.fires = d.f.map(([id, x, y]) => ({ id, x, y })); game.dragon.hp = d.dh; game.dragon.hitN = d.hn; if (d.th) d.th.forEach((h, i) => game.tents[i].h = h); }
+      if (game.phase !== 'over') {
+        game.fires = d.f.map(([id, x, y, k, a]) => ({ id, x, y, kind: KINDS[k] || 'fire', a, vx: 0, vy: 0 }));
+        game.boss.hp = d.dh; game.boss.hitN = d.hn;
+        if (d.th) d.th.forEach((h, i) => { if (game.tents[i]) game.tents[i].h = h; });
+      }
       break;
     }
     case 'bex': applyBossFx(d); break;
+    case 'bfx': bossMouthFx(d.h, d.f); break;
     case 'fire': fireFx(d.side, !!d.b); break;
     case 'fly': sfx.fly(); break;
     case 'bar': sfx.barrier(); break;
-    case 'bfire': dragonMouthFx(d.h); break;
-    case 'bover': bossFinish(d.rank); break;
+    case 'bfire': bossMouthFx(d.h, d.f); break;
+    case 'bover': bossFinish(d.rank, d.totals); break;
+    case 'bend': if (d.totals) game.totals = d.totals; showTotalResult(); break;
   }
 }
 sfx.flame = () => { noise(.45, .22, 900); tone(160, .35, 'sawtooth', .05, 0, 70); };
 sfx.charge = () => { tone(180, LASER_CHARGE, 'sawtooth', .05, 0, 1100); };
 sfx.laser = () => { noise(.6, .4, 3200); tone(880, .5, 'square', .06, 0, 220); };
 sfx.roar = () => { tone(110, 1.1, 'sawtooth', .18, 0, 55); tone(140, 1, 'square', .08, .05, 70); noise(1.2, .4, 700); };
+sfx.flap = () => { for (let i = 0; i < 6; i++) noise(.12, .22, 500, i * .16); };
+sfx.wave = () => { tone(1200, .35, 'triangle', .05, 0, 300); };
+sfx.bite = () => { noise(.15, .35, 2200); tone(300, .15, 'square', .08, 0, 120); };
 
 $('btnBoss').onclick = () => { audioInit(); openBossLobby(); };
 $('btnBossBack').onclick = () => { if (net.boss) netSend({ t: 'bye' }); goTitle(); };
@@ -2655,10 +3020,17 @@ $('btnBossSolo').onclick = () => {
 $('btnBossHost').onclick = () => bossHost();
 $('btnBossJoin').onclick = () => bossJoin();
 $('bossCode').addEventListener('keydown', e => { if (e.key === 'Enter') bossJoin(); });
-$('btnBossStart').onclick = () => { if (net.isHost && net.players.length >= 1) bossHostStart(); };
+$('btnBossStart').onclick = () => { if (net.isHost && net.players.length >= 1) bossHostStart(0); };
+$('btnBossNext').onclick = () => {   // 同じメンバーで次のボスへ（倒した後にだけ押せる）
+  if (!game || game.phase !== 'over' || game.bossIdx >= BOSSES.length - 1) return;
+  const idx = game.bossIdx + 1;
+  if (game.role === 'solo') startBoss({ role: 'solo', roster: bossSoloRoster, you: 0, idx, totals: game.totals });
+  else if (game.role === 'host') bossHostStart(idx);
+};
+$('btnBossEnd').onclick = () => { if (game.role === 'host') netSend({ t: 'bend', totals: game.totals }); showTotalResult(); };
 $('btnBossAgain').onclick = () => {
   if (game.role === 'solo') { bossSoloRoster.forEach(p => p.diff = difficulty); startBoss({ role: 'solo', roster: bossSoloRoster, you: 0 }); }
-  else if (game.role === 'host') bossHostStart();
+  else if (game.role === 'host') bossHostStart(0);
 };
 $('btnBossTop').onclick = () => { if (net.boss) netSend({ t: 'bye' }); goTitle(); };
 
