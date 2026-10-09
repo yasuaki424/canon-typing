@@ -168,6 +168,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
         <button class="primary" id="btnBossNext">次のボスへ</button>
         <button id="btnBossEnd">ここで終了する</button>
         <button class="primary" id="btnBossLap2">🔥 2周目へ（強化ボス）</button>
+        <button class="primary" id="btnBossFinal">⚔️ Final War へ（3体同時）</button>
         <button class="primary" id="btnBossAgain">もう一度（1体目から）</button>
         <button id="btnBossTop">トップに戻る</button>
       </div>
@@ -221,7 +222,7 @@ const DIFFS = {
 };
 const HELL_REPEAT = 3, BABY_CHARS = 3;
 // ボスチャレンジ
-const BOSS_PREFIX = 'canon-typing-boss-v3-', BOSS_MAX = 8;
+const BOSS_PREFIX = 'canon-typing-boss-v4-', BOSS_MAX = 8;
 const BOSS_SC = 1 / 3, BOSS_V = 650;                    // 戦車は通常の1/3サイズ。距離が近いので初速を下げる
 const FIRE_DMG = 5, FIRE_R = 22;
 const BOSS_HP_MULT = 2;                                 // ボス戦の戦車は耐久力2倍（炎40発で壊れる。hell は20発）
@@ -247,6 +248,8 @@ const TENT_DMG = 14, TENT_BOMB_DMG = 36;   // 1発で14px、榴弾で36px縮む�
 const MOTH_Y = -250, BOSS_GROUND = 560, BOSS_GROUND_MIN = 440;
 // 2周目：同じボスが赤みがかった色・80%の大きさで、攻撃頻度は2倍（大技も2倍の頻度）
 const LAP2_SCALE = .8, LAP2_FREQ = 2, LAP2_FILTER = 'sepia(.55) saturate(2.6) hue-rotate(-30deg) brightness(.95)';
+// Final War（2周目クリア後）：3体同時。中央に巨大蛾、左端にドラゴン、右端にケルベロス。大きさ50%・青みがかった色・強さは2周目と同じ
+const FINAL_SCALE = .5, FINAL_EDGE = 200, FINAL_FILTER = 'sepia(.5) saturate(2.2) hue-rotate(170deg) brightness(.95)';
 const BOSS_LIFT = 60;    // 地上のボスは、戦車側でいちばん高い地面より60px高い丘の上に立つ
 const CB_BODY = { y: -70, rx: 100, ry: 52 };
 const CB_HEADS = [[-115, -175], [0, -205], [115, -175]];
@@ -1087,7 +1090,7 @@ function tankHit(t, x, y){
   return Math.abs(x - t.x) < (isFlying(t) ? 30 : 26) * sc + m && y > t.y - 36 * sc - m && y < t.y + 4;
 }
 function moveLimits(side){
-  const t = game.tanks[side]; if (t && t.lim) return t.lim;
+  const t = game.tanks[side]; if (t && t.lim) return t.lim === 'dyn' ? dynLim(t) : t.lim;
   return side === 0 ? [X_MIN, X_MAX] : [W - X_MAX, W - X_MIN];
 }
 
@@ -1987,49 +1990,64 @@ function pickHead(tx){   // 狙う側に向いている頭を選ぶ
 
 function startBoss({ role, seed, roster, you, idx = 0, totals = null, lap = 0 }){
   if (seed == null) seed = (Math.random() * 1e9) | 0;
-  const def = BOSSES[idx];
-  // ボスの足元を平らにする
-  //  蛾：空中に浮かぶので、上部の表示と重ならないよう地面を低めにする
-  //  地上のボス：戦車側でいちばん高い地面より BOSS_LIFT だけ高い丘の上に立たせる（攻撃が届きやすい高さ）。
-  //  丘が高すぎて上部の表示と重なるときは、地形全体を下にずらす
-  const ter = genTerrain(seed, true), h = ter.h, c = W / 2;
-  let p;
-  if (def.type === 'moth') p = Math.max(h[c], BOSS_GROUND);
-  else {
-    let top = H;
-    for (let x = 220; x <= c - 190; x += 5) top = Math.min(top, h[x], h[W - x]);
-    p = top - BOSS_LIFT;
-    if (p < BOSS_GROUND_MIN) { const sh = BOSS_GROUND_MIN - p; for (let x = 0; x <= W; x++) h[x] = Math.min(H - 30, h[x] + sh); p = BOSS_GROUND_MIN; }
-  }
-  for (let x = 0; x <= W; x++) {
-    const dd = Math.abs(x - c);
-    if (dd <= 190) h[x] = p;
-    else if (dd < 290) { let s = (dd - 190) / 100; s = s * s * (3 - 2 * s); h[x] = p * (1 - s) + h[x] * s; }
-  }
-  const hpMax = Math.round(roster.length * BOSS_HP_BASE * def.hpRate);
+  const fin = lap === 2, c = W / 2;   // lap: 0=1周目 1=2周目 2=Final War
+  const sc = fin ? FINAL_SCALE : lap ? LAP2_SCALE : 1;
+  const specs = fin ? [{ idx: 2, x: FINAL_EDGE }, { idx: 0, x: c }, { idx: 1, x: W - FINAL_EDGE }] : [{ idx, x: c }];
+  const nearOf = sp => fin ? BOSSES[sp.idx].near * sc : BOSSES[sp.idx].near;
+  // 戦車が動ける区間（ボスの間）
+  const zones = fin ? [[specs[0].x + nearOf(specs[0]), c - nearOf(specs[1])], [c + nearOf(specs[1]), specs[2].x - nearOf(specs[2])]]
+                    : [[220, c - nearOf(specs[0])], [W - (c - nearOf(specs[0])), W - 220]];
+  // ボスの足元：蛾は空中なので地面を低めに。地上のボスは戦車側でいちばん高い地面より少し高い丘の上（攻撃が届きやすい高さ）。
+  // 丘が高すぎて上部の表示と重なるときは、地形全体を下にずらす
+  const ter = genTerrain(seed, true), h = ter.h;
+  let top = H;
+  for (const [a, b] of zones) for (let x = Math.round(a); x <= b; x += 5) top = Math.min(top, h[x]);
+  let p = top - BOSS_LIFT * (fin ? .6 : 1);
+  const minG = fin ? 380 : BOSS_GROUND_MIN;
+  if (p < minG) { const sh = minG - p; for (let x = 0; x <= W; x++) h[x] = Math.min(H - 30, h[x] + sh); p = minG; }
+  const gys = specs.map(sp => {
+    if (BOSSES[sp.idx].type === 'moth') return Math.max(h[Math.round(sp.x)], fin ? 540 : BOSS_GROUND);
+    const r0 = 190 * (fin ? sc : 1), r1 = 100 * (fin ? sc : 1);
+    for (let x = 0; x <= W; x++) {
+      const dd = Math.abs(x - sp.x);
+      if (dd <= r0) h[x] = p;
+      else if (dd < r0 + r1) { let k = (dd - r0) / r1; k = k * k * (3 - 2 * k); h[x] = p * (1 - k) + h[x] * k; }
+    }
+    return p;
+  });
+  if (!fin && BOSSES[idx].type === 'moth') { const q = gys[0]; for (let x = 0; x <= W; x++) { const dd = Math.abs(x - c);
+    if (dd <= 190) h[x] = q; else if (dd < 290) { let k = (dd - 190) / 100; k = k * k * (3 - 2 * k); h[x] = q * (1 - k) + h[x] * k; } } }
+  const hard = lap > 0;   // 2周目とFinal Warは攻撃頻度2倍・最初から怒り
+  const bosses = specs.map((sp, bi) => {
+    const def = BOSSES[sp.idx], hpMax = Math.round(roster.length * BOSS_HP_BASE * def.hpRate);
+    return { idx: sp.idx, type: def.type, x: sp.x, gy: gys[bi], hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: new Array(def.heads).fill(0),
+             dead: false, deadT: 0, sndT: 0, atkT: (5 + bi * 1.5) / (def.freq * (hard ? LAP2_FREQ : 1)), stage: hard ? 1 : 0, flapT: 0,
+             midF: sp.x > c + 1 ? -1 : 1, lap, fin, sc, near: nearOf(sp), every: hard ? BARRAGE_EVERY / LAP2_FREQ : BARRAGE_EVERY };
+  });
   game = { mode: 'boss', role, seed, terrain: h, flat: ter.flat, clouds: ter.clouds,
            tanks: [], walls: [], shells: [], fires: [], fireQueue: [], lasers: [], parts: [], floats: [], tents: [],
            phase: 'ready', readyT: 2.6, goT: 0, shake: 0, nextId: 1, sendT: 0, mySide: you, rank: null,
-           bossIdx: idx, lap, totals: totals || roster.map(() => 0),
-           boss: { idx, type: def.type, x: c, gy: p, hp: hpMax, max: hpMax, hitN: 0, flash: 0, glow: new Array(def.heads).fill(0),
-                   dead: false, deadT: 0, sndT: 0, atkT: 5 / (def.freq * (lap ? LAP2_FREQ : 1)), stage: lap ? 1 : 0, flapT: 0, midF: 1,   // 2周目は最初から怒り状態
-                   lap, sc: lap ? LAP2_SCALE : 1, every: lap ? BARRAGE_EVERY / LAP2_FREQ : BARRAGE_EVERY } };
-  if (def.type === 'dragon') {   // 触手の防御壁はドラゴンだけ
+           bossIdx: fin ? BOSSES.length - 1 : idx, lap, final: fin, totals: totals || roster.map(() => 0),
+           bosses, boss: bosses[0] };
+  bosses.forEach((d, bi) => {   // 触手の防御壁はドラゴンだけ（ボスと一緒に縮む）
+    if (d.type !== 'dragon') return;
     for (const sd of [-1, 1]) TENT_X.forEach((ox, j) => {
-      const x = c + sd * ox * game.boss.sc, th = Math.round(TENT_H[j] * game.boss.sc);   // 2周目はボスと一緒に小さく
-      game.tents.push({ x, base: terrainAt(x), h: th, max: th, sd, ph: Math.random() * 6.28, flash: 0 });
+      const x = d.x + sd * ox * d.sc, th = Math.round(TENT_H[j] * d.sc);
+      game.tents.push({ x, base: terrainAt(x), h: th, max: th, sd, ph: Math.random() * 6.28, flash: 0, bi });
     });
-  }
-  // 偶数番目は左側、奇数番目は右側に並べる（ボスをまたいでは移動できない）
+  });
+  // 偶数番目は左の区間、奇数番目は右の区間に並べる（生きているボスはまたいで移動できない）
   const sides = [[], []]; roster.forEach((_, i) => sides[i % 2].push(i));
-  const lo = 40, hi = c - def.near, spawnLo = 220;
   game.tanks = roster.map((pl, i) => {
     const lr = i % 2, k = sides[lr].indexOf(i), m = sides[lr].length;
-    const x0 = spawnLo + (hi - spawnLo) * (k + 1) / (m + 1), x = lr ? W - x0 : x0;
+    let x;
+    if (fin) { const [a, b] = zones[lr]; x = a + (b - a) * (k + 1) / (m + 1); }
+    else { const hi = c - nearOf(specs[0]), x0 = 220 + (hi - 220) * (k + 1) / (m + 1); x = lr ? W - x0 : x0; }
     const t = mkTank(lr, pl.diff);
     t.hp *= BOSS_HP_MULT;
+    const hi = c - nearOf(specs[0]);
     Object.assign(t, { side: i, x, tx: x, sc: BOSS_SC, v: BOSS_V, name: pl.name, color: pl.color, angle: 30,
-                       maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: lr ? [W - hi, W - lo] : [lo, hi] });
+                       maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: fin ? 'dyn' : lr ? [W - hi, W - 40] : [40, hi] });
     t.y = terrainAt(x);
     return t;
   });
@@ -2037,9 +2055,26 @@ function startBoss({ role, seed, roster, you, idx = 0, totals = null, lap = 0 })
   nextWord();
   hideOverlays();
   if (document.activeElement) document.activeElement.blur();
-  setMsg(lap ? `READY…　【2周目】${def.name} は最初から怒っている！ 気をつけろ！` : `READY…　ボス ${idx + 1}/3：${def.name} を倒そう！`, lap ? 'bad' : 'info');
+  const def = BOSSES[idx];
+  setMsg(fin ? 'READY…　⚔️ FINAL WAR！ 3体のボスを全部倒せ！ 倒したボスの上は通れるようになる'
+         : lap ? `READY…　【2周目】${def.name} は最初から怒っている！ 気をつけろ！` : `READY…　ボス ${idx + 1}/3：${def.name} を倒そう！`, hard ? 'bad' : 'info');
   renderPanel();
 }
+// 生きているボスはまたげない。倒されて沈んだボスの上は通れる
+function dynLim(t){
+  let lo = 40, hi = W - 40;
+  for (const d of game.bosses) { if (d.dead) continue; if (d.x < t.x) lo = Math.max(lo, d.x + d.near); else hi = Math.min(hi, d.x - d.near); }
+  return [lo, hi];
+}
+const useBoss = i => (game.boss = game.bosses[i] || game.bosses[0]);
+const bossIndex = () => Math.max(0, game.bosses.indexOf(game.boss));
+function queueFire(o){ o.bi = bossIndex(); game.fireQueue.push(o); }
+function hitAnyBoss(x, y){
+  for (let i = 0; i < game.bosses.length; i++) { if (game.bosses[i].dead) continue; useBoss(i); if (bossHit(x, y)) return i; }
+  return -1;
+}
+// 地上の向き：両端のボスは内側（戦車のいる方）を向いた頭を使う
+const inwardDir = d => d.fin ? (d.x < W * .3 ? 1 : d.x > W * .7 ? -1 : 0) : 0;
 
 // ---------- 当たり判定 ----------
 function segHit(x, y, ax, ay, bx, by, r){
@@ -2084,16 +2119,23 @@ const KINDS = ['fire', 'red', 'scale', 'wave', 'fang'];
 const TRAIL_COL = { fire: ['#ffd166', '#ff9f1c', '#ff5400'], red: ['#fecaca', '#ef4444', '#b91c1c'],
                     scale: ['#fef9c3', '#fde047', '#facc15'], wave: ['#e0f2fe', '#a5f3fc', '#ffffff'], fang: ['#fee2e2', '#ffffff', '#f87171'] };
 function bossUpdate(dt){
-  const d = game.boss;
-  d.flash = Math.max(0, d.flash - dt); d.glow = d.glow.map(g => Math.max(0, g - dt)); d.sndT = Math.max(0, d.sndT - dt);
-  d.flapT = Math.max(0, d.flapT - dt);
-  if (d.dead) d.deadT += dt;
+  game.bosses.forEach(d => {
+    game.boss = d;
+    d.flash = Math.max(0, d.flash - dt); d.glow = d.glow.map(g => Math.max(0, g - dt)); d.sndT = Math.max(0, d.sndT - dt);
+    d.flapT = Math.max(0, d.flapT - dt);
+    if (d.dead) d.deadT += dt;
+    if (d.stage === 2 && !d.dead && Math.random() < dt * 8) {   // 激怒中は口から煙
+      const m = emitPoint(Math.floor(Math.random() * d.glow.length), Math.random() < .5 ? -1 : 1);
+      game.parts.push({ x: m.x, y: m.y, vx: rnd(-15, 15), vy: rnd(-50, -25), life: rnd(.8, 1.4), max: 1.4, size: rnd(6, 12), color: '#4b5563', g: -10, smoke: true });
+    }
+  });
   for (const f of game.fires) {
     const col = TRAIL_COL[f.kind] || TRAIL_COL.fire;
     game.parts.push({ x: f.x + rnd(-4, 4), y: f.y + rnd(-4, 4), vx: rnd(-30, 30), vy: rnd(-40, 10),
       life: rnd(.2, .4), max: .4, size: f.kind === 'scale' ? rnd(2, 4) : rnd(3, 7), color: col[Math.floor(Math.random() * 3)], g: f.kind === 'scale' ? 30 : -80 });
   }
   for (const L of game.lasers) {
+    const d = useBoss(L.bi || 0);
     if (L.charge > 0) {
       L.charge -= dt; d.glow[L.h] = Math.max(d.glow[L.h], .2);
       if (L.charge <= 0) { sfx.laser(); game.shake = Math.max(game.shake, 6); }
@@ -2109,17 +2151,18 @@ function bossUpdate(dt){
     }
   }
   game.lasers = game.lasers.filter(L => L.life > 0);
-  if (d.stage === 2 && !d.dead && Math.random() < dt * 8) {   // 激怒中は口から煙
-    const m = emitPoint(Math.floor(Math.random() * d.glow.length), Math.random() < .5 ? -1 : 1);
-    game.parts.push({ x: m.x, y: m.y, vx: rnd(-15, 15), vy: rnd(-50, -25), life: rnd(.8, 1.4), max: 1.4, size: rnd(6, 12), color: '#4b5563', g: -10, smoke: true });
-  }
   updateFireworks(dt);
   if (!isAuth()) return;
-  if (game.phase === 'play' && !d.dead) {   // 撃たれなくても自分から攻撃してくる
+  game.bosses.forEach(d => {   // 撃たれなくても自分から攻撃してくる
+    game.boss = d;
+    if (game.phase !== 'play' || d.dead) return;
     d.atkT -= dt;
     if (d.atkT <= 0) { bossMove(pickMove()); d.atkT = rnd(4, 7) * RAGE_MULT[d.stage] / (bossDef().freq * (d.lap ? LAP2_FREQ : 1)); }
+  });
+  for (const q of game.fireQueue) {
+    q.delay -= dt;
+    if (q.delay <= 0) { const d = useBoss(q.bi || 0); if (!d.dead) launchBall(q.tx, q.kind, q.src); }
   }
-  for (const q of game.fireQueue) { q.delay -= dt; if (q.delay <= 0) launchBall(q.tx, q.kind, q.src); }
   game.fireQueue = game.fireQueue.filter(q => q.delay > 0);
   bossSimShells(dt);
   bossSimFires(dt);
@@ -2129,7 +2172,7 @@ function bossUpdate(dt){
     if (t.respawnT <= 0) { t.dead = false; t.hp = t.maxHp; t.tx = t.x; t.alt = 0; bossEvent({ t: 'bex', k: 'revive', i }); }
   });
 }
-function bossEvent(ev){ applyBossFx(ev); if (isHost()) netSend(ev); }
+function bossEvent(ev){ if (ev.bi == null) ev.bi = bossIndex(); applyBossFx(ev); if (isHost()) netSend(ev); }
 function bossSimShells(dt){
   for (const s of game.shells) {
     s.trail.push({ x: s.x, y: s.y }); if (s.trail.length > 12) s.trail.shift();
@@ -2138,7 +2181,8 @@ function bossSimShells(dt){
       s.vy += G * h; s.x += s.vx * h; s.y += s.vy * h;
       const ti = tentHit(s.x, s.y);
       if (ti >= 0) { s.dead = true; hitTent(ti, s); break; }
-      if (bossHit(s.x, s.y)) { s.dead = true; shellHitsBoss(s); break; }
+      const hb = hitAnyBoss(s.x, s.y);
+      if (hb >= 0) { s.dead = true; useBoss(hb); shellHitsBoss(s); break; }
       if (s.y >= terrainAt(s.x)) { s.dead = true; bossEvent({ t: 'bex', k: 'ground', x: s.x, y: s.y, b: s.bomb ? 1 : 0 }); break; }
       if (s.x < -150 || s.x > W + 150 || s.y > H + 50) { s.dead = true; break; }
     }
@@ -2148,7 +2192,7 @@ function bossSimShells(dt){
 function tentHit(x, y){
   for (let i = 0; i < game.tents.length; i++) {
     const t = game.tents[i];
-    if (t.h > 0 && Math.abs(x - t.x) < TENT_HW && y > t.base - t.h && y < t.base + 4) return i;
+    if (t.h > 0 && !game.bosses[t.bi || 0].dead && Math.abs(x - t.x) < TENT_HW && y > t.base - t.h && y < t.base + 4) return i;
   }
   return -1;
 }
@@ -2164,10 +2208,17 @@ function shellHitsBoss(s){
   const units = s.bomb ? 2 : 1, dm = units * (t.diff === 'hell' ? 2 : 1);   // 榴弾は2発分、hell は攻撃力2倍
   d.hp = Math.max(0, d.hp - dm); t.hits += units;
   bossEvent({ t: 'bex', k: 'dragon', x: s.x, y: s.y, b: s.bomb ? 1 : 0, o: s.owner, dm });
-  if (d.hp <= 0) { bossEnd(); return; }
+  if (d.hp <= 0) { bossDown(); return; }
   const r = d.hp / d.max, st = r <= 1 / 3 ? 2 : r <= 2 / 3 ? 1 : 0;
   if (st > d.stage) { d.stage = st; bossEvent({ t: 'bex', k: 'rage', s: st, x: d.x, y: Math.max(180, d.gy + bossDef().topY * (d.sc || 1)) }); d.atkT = Math.min(d.atkT, 1.2); }
   bossCounter();
+}
+function bossDown(){   // ボス撃破。Final War は全部倒すまで続く
+  const d = game.boss;
+  if (!game.final) { bossEnd(); return; }
+  d.dead = true; d.hp = 0;
+  bossEvent({ t: 'bex', k: 'down' });
+  if (game.bosses.every(b => b.dead)) bossEnd();
 }
 function bossCounter(){   // 攻撃を受けたときの反撃（頻度はボスごと）。10回に1度は大技
   const d = game.boss, def = bossDef(); d.hitN++;
@@ -2188,15 +2239,21 @@ function bossSpecial(){
   } else {   // ドラゴン：全周囲の炎 ／ 蛾：鱗粉の嵐
     const moth = d.type === 'moth';
     if (moth) bossEvent({ t: 'bex', k: 'flap' });
-    for (let i = 0; i < BARRAGE_N; i++) {
-      const lr = i % 2, frac = (Math.floor(i / 2) + Math.random()) / (BARRAGE_N / 2);
-      const tx = lr ? W / 2 + 190 + frac * span : 30 + frac * span;
-      game.fireQueue.push({ delay: i * .06, tx, kind: moth ? 'scale' : 'fire', src: moth ? wingPoint(lr ? 1 : -1) : null });
+    for (let i = 0; i < BARRAGE_N; i++) {   // 画面全体にまんべんなく
+      let tx = 30 + (W - 60) * (i + Math.random()) / BARRAGE_N;
+      if (game.bosses.some(b => !b.dead && Math.abs(tx - b.x) < 190 * (b.fin ? b.sc : 1))) tx = randomTx();
+      queueFire({ delay: i * .06, tx, kind: moth ? 'scale' : 'fire', src: moth ? wingPoint(tx > d.x ? 1 : -1) : null });
     }
   }
   bossEvent({ t: 'bex', k: 'roar', text: def.specialText, x: d.x, y: Math.max(160, d.gy + def.topY * (d.sc || 1) + 10) });
 }
-const randomTx = () => { const d = game.boss; return Math.random() < .5 ? rnd(30, d.x - 190) : rnd(d.x + 190, W - 30); };
+const randomTx = () => {   // 生きているボスの足元以外のランダムな位置
+  for (let k = 0; k < 40; k++) {
+    const x = rnd(30, W - 30);
+    if (game.bosses.every(b => b.dead || Math.abs(x - b.x) > 190 * (b.fin ? b.sc : 1))) return x;
+  }
+  return rnd(30, W - 30);
+};
 function pickMove(){
   const w = bossDef().moves[game.boss.stage];
   let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0);
@@ -2218,17 +2275,19 @@ function bossMove(kind){   // 自発攻撃の技
     case 'single': launchBall(randomTx(), 'fire'); break;
     case 'triple': {
       const tx = randomTx();
-      for (let i = 0; i < 3; i++) game.fireQueue.push({ delay: i * .18, tx: clamp(tx + (i - 1) * 45, 20, W - 20), kind: 'fire' });
+      for (let i = 0; i < 3; i++) queueFire({ delay: i * .18, tx: clamp(tx + (i - 1) * 45, 20, W - 20), kind: 'fire' });
       say('3連射！'); break;
     }
     case 'fan': {
-      const left = side(), lo = left ? 30 : d.x + 190, hi = left ? d.x - 190 : W - 30;
-      for (let i = 0; i < 5; i++) game.fireQueue.push({ delay: i * .08, tx: lo + (hi - lo) * (i + .5) / 5, kind: 'fire' });
+      const k = d.fin ? d.sc : 1, rL = d.x - 190 * k - 30, rR = W - 30 - (d.x + 190 * k);
+      let left = side(); if (rL < 150) left = false; if (rR < 150) left = true;
+      const lo = left ? 30 : d.x + 190 * k, hi = left ? d.x - 190 * k : W - 30;
+      for (let i = 0; i < 5; i++) queueFire({ delay: i * .08, tx: lo + (hi - lo) * (i + .5) / 5, kind: 'fire' });
       say('扇状ブレス！'); break;
     }
     case 'aimed': {
       const t = hateTarget(); if (!t) { launchBall(randomTx(), 'fire'); break; }
-      for (let i = 0; i < 2; i++) game.fireQueue.push({ delay: i * .35, tx: clamp(t.x + rnd(-25, 25), 20, W - 20), kind: 'fire' });
+      for (let i = 0; i < 2; i++) queueFire({ delay: i * .35, tx: clamp(t.x + rnd(-25, 25), 20, W - 20), kind: 'fire' });
       say(`🎯 ${t.name} を狙っている！`); break;
     }
     case 'laser': if (!startLaser()) launchBall(randomTx(), 'fire'); break;
@@ -2236,7 +2295,7 @@ function bossMove(kind){   // 自発攻撃の技
     // --- 蛾・ケルベロス共通：通常攻撃（赤い砲弾。半分はよく当てている人を狙う） ---
     case 'red': {
       const n = 1 + st, t = Math.random() < .5 ? hateTarget() : null;
-      for (let i = 0; i < n; i++) game.fireQueue.push({ delay: i * .3, kind: 'red',
+      for (let i = 0; i < n; i++) queueFire({ delay: i * .3, kind: 'red',
         tx: t ? clamp(t.x + rnd(-30, 30), 20, W - 20) : randomTx() });
       break;
     }
@@ -2244,7 +2303,7 @@ function bossMove(kind){   // 自発攻撃の技
     case 'scales': {   // 羽ばたいて鱗粉（黄色い砲弾）を周囲に散布
       const n = [8, 11, 14][st];
       bossEvent({ t: 'bex', k: 'flap' });
-      for (let i = 0; i < n; i++) { const lr = i % 2; game.fireQueue.push({ delay: .2 + i * .07, kind: 'scale', tx: lr ? rnd(d.x + 190, W - 30) : rnd(30, d.x - 190), src: wingPoint(lr ? 1 : -1) }); }
+      for (let i = 0; i < n; i++) { const tx = randomTx(); queueFire({ delay: .2 + i * .07, kind: 'scale', tx, src: wingPoint(tx > d.x ? 1 : -1) }); }
       say('鱗粉！'); break;
     }
     case 'wave': {   // 羽ばたいて衝撃波（半月型の刃が放射状にまっすぐ飛ぶ）
@@ -2259,10 +2318,11 @@ function bossMove(kind){   // 自発攻撃の技
     // --- ケルベロス ---
     case 'claser': if (!startLaser()) launchBall(randomTx(), 'red'); break;
     case 'bite': {   // 噛みつき：牙の形の衝撃波が地面すれすれにまっすぐ飛ぶ
-      const heads = st === 0 ? [Math.floor(Math.random() * 3)] : [0, 2];
+      const inw = inwardDir(d);
+      const heads = inw ? (st === 0 ? [1] : inw < 0 ? [0, 1] : [1, 2]) : st === 0 ? [Math.floor(Math.random() * 3)] : [0, 2];
       heads.forEach((h, k) => {
-        const f = h === 0 ? -1 : h === 2 ? 1 : (side() ? -1 : 1), p = emitPoint(h, f), a = rnd(8, 20) * DEG;
-        bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfx', h, f });
+        const f = h === 0 ? -1 : h === 2 ? 1 : (inw || (side() ? -1 : 1)), p = emitPoint(h, f), a = rnd(8, 20) * DEG;
+        bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfx', h, f, bi: bossIndex() });
         launchStraight(p.x, p.y, f > 0 ? a : Math.PI - a, 520, 'fang', 760);
       });
       say('噛みつき！'); break;
@@ -2270,11 +2330,12 @@ function bossMove(kind){   // 自発攻撃の技
   }
 }
 function startLaser(sweep = false, hForce = null, fForce = 0){
-  const d = game.boss, nh = d.glow.length;
-  const free = [...Array(nh).keys()].filter(h => !game.lasers.some(L => L.h === h));
+  const d = game.boss, nh = d.glow.length, bi = bossIndex(), inw = inwardDir(d);
+  const okDir = h => !inw || hForce != null || (d.type === 'dragon' ? (inw > 0 ? h >= 2 : h <= 1) : d.type === 'cerb' ? (inw > 0 ? h >= 1 : h <= 1) : true);
+  const free = [...Array(nh).keys()].filter(h => okDir(h) && !game.lasers.some(L => L.h === h && (L.bi || 0) === bi));
   if (hForce != null ? !free.includes(hForce) : !free.length) return false;
   const h = hForce != null ? hForce : free[Math.floor(Math.random() * free.length)];
-  const f = fForce || (d.type === 'cerb' && h === 1 ? (Math.random() < .5 ? -1 : 1) : 0);
+  const f = fForce || (d.type === 'cerb' && h === 1 ? (inw || (Math.random() < .5 ? -1 : 1)) : 0);
   // 通常：水平から下向きに6〜30°で固定。なぎ払い：ほぼ水平から急角度まで動かす
   const a = sweep ? rnd(-6, 2) : rnd(6, 30), a2 = sweep ? rnd(38, 52) : a;
   bossEvent({ t: 'bex', k: 'laser', h, f, a, a2, dur: sweep ? SWEEP_LIFE : LASER_LIFE, c: d.type === 'cerb' ? 'red' : 'fire' });
@@ -2313,7 +2374,7 @@ function launchBall(tx, kind = 'fire', src = null){   // 山なりの弾（着�
   if (src) { x = src.x; y = src.y; }
   else {
     const { h, f } = pickHead(tx), p = emitPoint(h, f); x = p.x; y = p.y;
-    bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfire', h, f });
+    bossMouthFx(h, f); if (isHost()) netSend({ t: 'bfire', h, f, bi: bossIndex() });
   }
   const T = rnd(1.4, 2.4), ty = terrainAt(tx);
   game.fires.push({ id: game.nextId++, x, y, vx: (tx - x) / T, vy: (ty - y - .5 * G * T * T) / T, kind });
@@ -2364,15 +2425,16 @@ function bossEnd(){
 }
 function bossFinish(rank, totals){
   if (game.phase === 'over') return;
-  const g = game, d = game.boss, def = bossDef(), last = d.idx === BOSSES.length - 1;
-  game.phase = 'over'; game.rank = rank; game.totals = totals; d.dead = true; d.hp = 0;
+  const g = game, fin = game.final, d = game.boss, def = bossDef(), last = fin || d.idx === BOSSES.length - 1;
+  game.phase = 'over'; game.rank = rank; game.totals = totals;
+  for (const b of game.bosses) { if (!b.dead) { b.dead = true; b.deadT = 0; } b.hp = 0; }
   game.fires = []; game.fireQueue = []; game.lasers = [];
-  setMsg(`${def.name} を倒した！`, 'info');
-  for (let i = 0; i < 8; i++) setTimeout(() => {
+  setMsg(fin ? '⚔️ Final War 勝利！' : `${def.name} を倒した！`, 'info');
+  if (!fin) for (let i = 0; i < 8; i++) setTimeout(() => {
     if (game !== g) return;
     explosionParts(d.x + rnd(-150, 150) * (d.sc || 1), d.gy + def.topY * (d.sc || 1) * rnd(.2, .8), 2); sfx.boom(2); game.shake = 18;
   }, i * 280);
-  if (last) setTimeout(() => { if (game === g) { setMsg('🎆 全ボス撃破！ おめでとう！', 'info'); startFireworks(); } }, 2400);
+  if (last) setTimeout(() => { if (game === g) { setMsg(fin ? '👑 Final War 勝利！ 全ボス制覇！' : '🎆 全ボス撃破！ おめでとう！', 'info'); startFireworks(); } }, fin ? 1800 : 2400);
   setTimeout(() => { if (game !== g) return; sfx.win(); showBossResult(); }, last ? 6500 : 3200);
 }
 
@@ -2410,6 +2472,7 @@ function updateFireworks(dt){
 // ---------- 演出 ----------
 const DIED_MSG = 'やられた！ 3秒後にグレーで復活します（このボスではランク外になります）';
 function applyBossFx(ev){
+  if (ev.bi != null) useBoss(ev.bi);
   const { x, y } = ev, d = game.boss;
   switch (ev.k) {
     case 'ground':
@@ -2444,7 +2507,7 @@ function applyBossFx(ev){
     }
     case 'laser': {
       const a2 = ev.a2 == null ? ev.a : ev.a2, dur = ev.dur || LASER_LIFE;
-      const L = Object.assign({ h: ev.h, f: ev.f || 0, a: ev.a, a2, dur, c: ev.c || 'fire', charge: LASER_CHARGE, life: dur, hit: [] }, laserPath(ev.h, ev.a, ev.f));
+      const L = Object.assign({ bi: ev.bi || 0, h: ev.h, f: ev.f || 0, a: ev.a, a2, dur, c: ev.c || 'fire', charge: LASER_CHARGE, life: dur, hit: [] }, laserPath(ev.h, ev.a, ev.f));
       if (a2 !== ev.a) L.end = laserPath(ev.h, a2, ev.f);
       if (d.type === 'cerb' && ev.h === 1 && ev.f) d.midF = ev.f;
       game.lasers.push(L); sfx.charge();
@@ -2478,6 +2541,21 @@ function applyBossFx(ev){
       }
       hitTanksFx(ev);
       break;
+    case 'down': {   // Final War：ボスが倒れて地面に沈む
+      const def = bossDef(), k = d.sc || 1;
+      if (!d.dead) { d.dead = true; d.hp = 0; }
+      d.deadT = 0;
+      game.tents.forEach(t => { if ((t.bi || 0) === ev.bi) t.h = 0; });
+      const g = game;
+      for (let i = 0; i < 6; i++) setTimeout(() => {
+        if (game !== g) return;
+        explosionParts(d.x + rnd(-130, 130) * k, d.gy + def.topY * k * rnd(.2, .8), 2); sfx.boom(2); game.shake = 16;
+      }, i * 220);
+      addFloat(`💥 ${def.short} 撃破！`, d.x, Math.max(170, d.gy + def.topY * k), '#fde047');
+      const left = game.bosses.filter(b => !b.dead).length;
+      if (left) setMsg(`${def.short}を倒した！ 残り${left}体。倒したボスの上は通れるようになった`, 'info');
+      break;
+    }
     case 'revive': {
       const t = game.tanks[ev.i];
       addFloat('REVIVE', t.x, t.y - 40, '#d1d5db'); tone(520, .25, 'triangle', .12, 0, 900);
@@ -2496,12 +2574,33 @@ function hitTanksFx(ev){
 
 // ---------- ボスの描画 ----------
 function drawBoss(now){
-  const d = game.boss;
-  ctx.save();
-  if (d.sc && d.sc !== 1) { const o = bossPivot(); ctx.translate(o.x, o.y); ctx.scale(d.sc, d.sc); ctx.translate(-o.x, -o.y); }
-  if (d.lap) ctx.filter = LAP2_FILTER;   // 2周目は全体に赤みがかった色
-  if (d.type === 'moth') drawMoth(now); else if (d.type === 'cerb') drawCerb(now); else drawDragon(now);
-  ctx.restore();
+  game.bosses.forEach(d => {
+    game.boss = d;
+    if (d.fin && d.dead && d.deadT > 8) return;   // 完全に沈んだら描かない
+    ctx.save();
+    if (d.fin && d.dead) ctx.translate(0, Math.max(0, d.deadT - (d.type === 'moth' ? 1.2 : .4)) * 70);   // 地面に沈む
+    if (d.sc && d.sc !== 1) { const o = bossPivot(); ctx.translate(o.x, o.y); ctx.scale(d.sc, d.sc); ctx.translate(-o.x, -o.y); }
+    if (d.lap === 2) ctx.filter = FINAL_FILTER;   // Final War は青みがかった色
+    else if (d.lap) ctx.filter = LAP2_FILTER;     // 2周目は赤みがかった色
+    if (d.type === 'moth') drawMoth(now); else if (d.type === 'cerb') drawCerb(now); else drawDragon(now);
+    ctx.restore();
+    if (d.fin && d.dead) drawGroundOver(d.x - 320 * d.sc, d.x + 320 * d.sc);   // 沈んだ部分を地面で隠す
+  });
+}
+function drawGroundOver(x0, x1){
+  const h = game.terrain;
+  x0 = Math.max(0, Math.floor(x0 / 4) * 4); x1 = Math.min(W, Math.ceil(x1 / 4) * 4);
+  const dirt = ctx.createLinearGradient(0, 300, 0, H);
+  dirt.addColorStop(0, '#7a5230'); dirt.addColorStop(1, '#3d2716');
+  ctx.fillStyle = dirt; ctx.beginPath(); ctx.moveTo(x0, H + 30);
+  for (let x = x0; x <= x1; x += 4) ctx.lineTo(x, h[x]);
+  ctx.lineTo(x1, H + 30); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#5fb04a'; ctx.lineWidth = 10; ctx.lineJoin = 'round'; ctx.beginPath();
+  for (let x = x0; x <= x1; x += 4) x === x0 ? ctx.moveTo(x, h[x] + 3) : ctx.lineTo(x, h[x] + 3);
+  ctx.stroke();
+  ctx.strokeStyle = '#8fd46f'; ctx.lineWidth = 2; ctx.beginPath();
+  for (let x = x0; x <= x1; x += 4) x === x0 ? ctx.moveTo(x, h[x]) : ctx.lineTo(x, h[x]);
+  ctx.stroke();
 }
 function bossFilter(d){
   if (d.dead) ctx.filter = 'grayscale(1) brightness(.45)';
@@ -2788,6 +2887,7 @@ function drawBossHUD(now){
   ctx.save(); ctx.translate(18, 14); ctx.scale(HUD_K, HUD_K);
   drawHudPanel(me, me.name + (lbl ? ` [${lbl}]` : ''), game.mySide, now);
   ctx.restore();
+  if (game.final) { drawFinalBars(); drawScoreBoard(); drawBossBanner('FINAL WAR'); return; }
   // ボスの耐久力
   const d = game.boss, def = bossDef(), bw = 760, bx = W / 2 - bw / 2;
   ctx.fillStyle = 'rgba(8,12,24,.6)'; rr(bx - 18, 10, bw + 36, 100, 14); ctx.fill();
@@ -2809,6 +2909,42 @@ function drawBossHUD(now){
   }
   ctx.textAlign = 'center'; ctx.font = '17px "Segoe UI","Meiryo",sans-serif'; ctx.fillStyle = '#fdba74';
   ctx.fillText(`${def.special}まで あと ${d.every - d.hitN % d.every} 発`, W / 2, 100);
+  drawScoreBoard();
+  drawBossBanner(game.readyT > 1 ? `${d.lap ? '2周目 ' : ''}BOSS ${d.idx + 1}` : 'READY');
+}
+function drawFinalBars(){
+  const bw = 800, bx = W / 2 - bw / 2, cw = (bw - 40) / 3;
+  ctx.fillStyle = 'rgba(8,12,24,.6)'; rr(bx - 18, 10, bw + 36, 104, 14); ctx.fill();
+  const left = game.bosses.filter(b => !b.dead).length;
+  ctx.textAlign = 'center'; ctx.font = 'bold 24px "Segoe UI","Meiryo",sans-serif'; ctx.fillStyle = '#93c5fd';
+  ctx.fillText(`⚔️ FINAL WAR　残り ${left} 体`, W / 2, 36);
+  game.bosses.forEach((d, i) => {   // 画面上の並び（左・中央・右）と同じ順に表示
+    const x = bx + i * (cw + 20), def = BOSSES[d.idx];
+    ctx.textAlign = 'left'; ctx.font = 'bold 17px "Segoe UI","Meiryo",sans-serif';
+    ctx.fillStyle = d.dead ? '#9ca3af' : '#bfdbfe'; ctx.fillText(def.name + (d.dead ? '　撃破！' : d.stage === 2 ? ' 🔥' : ' 😡'), x, 62);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.fillText(d.dead ? '' : `${d.hp}/${d.max}`, x + cw, 62);
+    ctx.fillStyle = '#111827'; rr(x, 70, cw, 18, 6); ctx.fill();
+    if (d.hp > 0) {
+      const g = ctx.createLinearGradient(x, 0, x + cw, 0); g.addColorStop(0, '#2563eb'); g.addColorStop(1, '#a855f7');
+      ctx.fillStyle = g; rr(x, 70, cw * d.hp / d.max, 18, 6); ctx.fill();
+    }
+    if (!d.dead) {
+      ctx.textAlign = 'center'; ctx.font = '13px "Segoe UI","Meiryo",sans-serif'; ctx.fillStyle = '#fdba74';
+      ctx.fillText(`${def.special}まで ${d.every - d.hitN % d.every}`, x + cw / 2, 105);
+    }
+  });
+}
+function drawBossBanner(text){
+  let banner = null;
+  if (game.phase === 'ready') banner = game.readyT > 1 ? text : 'READY';
+  else if (game.goT > 0) banner = 'GO!';
+  if (banner) {
+    ctx.textAlign = 'center'; ctx.font = '900 120px "Segoe UI",sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillText(banner, W / 2 + 5, 470 + 5);
+    ctx.fillStyle = '#ffd166'; ctx.fillText(banner, W / 2, 470);
+  }
+}
+function drawScoreBoard(){
   // 命中数ボード
   const rows = game.tanks.map((t, i) => ({ t, i })).sort((a, b) => b.t.hits - a.t.hits);
   const SW = 300, K = 1.3;
@@ -2825,14 +2961,6 @@ function drawBossHUD(now){
     ctx.textAlign = 'right'; ctx.font = 'bold 14px "Segoe UI",sans-serif'; ctx.fillText(t.hits, SW - 12, y); ctx.textAlign = 'left';
   });
   ctx.restore();
-  let banner = null;
-  if (game.phase === 'ready') banner = game.readyT > 1 ? `${d.lap ? '2周目 ' : ''}BOSS ${d.idx + 1}` : 'READY';
-  else if (game.goT > 0) banner = 'GO!';
-  if (banner) {
-    ctx.textAlign = 'center'; ctx.font = '900 120px "Segoe UI",sans-serif';
-    ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillText(banner, W / 2 + 5, 470 + 5);
-    ctx.fillStyle = '#ffd166'; ctx.fillText(banner, W / 2, 470);
-  }
 }
 
 // ---------- 結果画面 ----------
@@ -2851,11 +2979,25 @@ function totalRows(){
   return game.tanks.map((t, i) => ({ name: t.name, color: t.color, hits: game.totals[i], ghost: false, me: i === game.mySide }));
 }
 function setBossButtons(list){   // 表示するボタンだけ出す
-  for (const id of ['btnBossNext', 'btnBossEnd', 'btnBossLap2', 'btnBossAgain', 'btnBossTop']) $(id).style.display = list.includes(id) ? '' : 'none';
+  for (const id of ['btnBossNext', 'btnBossEnd', 'btnBossLap2', 'btnBossFinal', 'btnBossAgain', 'btnBossTop']) $(id).style.display = list.includes(id) ? '' : 'none';
 }
 function showBossResult(){
   const d = game.boss, def = bossDef(), last = d.idx === BOSSES.length - 1, lead = game.role !== 'guest';
   const rows = game.rank.map((r, i) => ({ name: r[0], color: r[1], hits: r[2], ghost: !!r[3], me: i === game.mySide }));
+  if (game.final) {   // Final War 勝利
+    $('bossResTitle').textContent = '👑 Final War 勝利！ 全ボス制覇！';
+    $('bossResSub').textContent = 'Final War で当てた数のランキング（榴弾は1発で2発分）。やられてグレーで復活した人はランク外です';
+    $('rankHead').textContent = '⚔️ Final War のランキング';
+    $('rankTable').innerHTML = rankRows(rows.filter(r => !r.ghost), rows.filter(r => r.ghost));
+    $('rankWrap').style.display = ''; $('totalWrap').style.display = '';
+    $('totalTable').innerHTML = rankRows(totalRows());
+    $('ovBossRes').classList.add('final');
+    setBossButtons(lead ? ['btnBossAgain', 'btnBossTop'] : ['btnBossTop']);
+    $('bossResStatus').textContent = lead ? '' : 'ホストが「もう一度」を押すと1体目から再挑戦します';
+    $('btnBossTop').textContent = lead ? 'トップに戻る' : '抜けてトップに戻る';
+    show('ovBossRes');
+    return;
+  }
   const lapTag = d.lap ? '（2周目）' : '';
   $('bossResTitle').textContent = last ? (d.lap ? '🏆 2周目も全ボス撃破！ 完全制覇！' : '🎆 全ボス撃破！ おめでとう！') : `${def.name}${lapTag} を倒した！`;
   $('bossResSub').textContent = `${def.name} に当てた数のランキング（榴弾は1発で2発分）。やられてグレーで復活した人はランク外です`;
@@ -2866,10 +3008,11 @@ function showBossResult(){
   if (last) $('totalTable').innerHTML = rankRows(totalRows());
   $('ovBossRes').classList.toggle('final', last);
   if (last) {
-    const canLap2 = !d.lap;   // 1周目を終えたら2周目へ進める
-    setBossButtons(lead ? (canLap2 ? ['btnBossLap2', 'btnBossAgain', 'btnBossTop'] : ['btnBossAgain', 'btnBossTop']) : ['btnBossTop']);
-    $('bossResStatus').textContent = lead ? (canLap2 ? '2周目は赤く強化されたボス（小さく・攻撃2倍）が同じメンバーで待っています！' : '')
-      : canLap2 ? 'ホストが「2周目へ」か「もう一度」を選ぶのを待っています…' : 'ホストが「もう一度」を押すと1体目から再挑戦します';
+    const canLap2 = !d.lap;   // 1周目を終えたら2周目へ、2周目を終えたら Final War へ進める
+    setBossButtons(lead ? [canLap2 ? 'btnBossLap2' : 'btnBossFinal', 'btnBossAgain', 'btnBossTop'] : ['btnBossTop']);
+    $('bossResStatus').textContent = lead ? (canLap2 ? '2周目は赤く強化されたボス（小さく・攻撃2倍）が同じメンバーで待っています！'
+                                                     : 'Final War：青いボス3体が同時に襲ってくる！ 全部倒せば勝利！')
+      : canLap2 ? 'ホストが「2周目へ」か「もう一度」を選ぶのを待っています…' : 'ホストが「Final War へ」か「もう一度」を選ぶのを待っています…';
   } else {
     setBossButtons(lead ? ['btnBossNext', 'btnBossEnd'] : ['btnBossTop']);
     $('btnBossNext').textContent = `次のボスへ：${BOSSES[d.idx + 1].name}${lapTag}`;
@@ -2984,7 +3127,7 @@ function bossSendState(){
                             t.dead ? 1 : 0, t.ghost ? 1 : 0, t.hits]),
     s: game.shells.map(s => [s.id, r1(s.x), r1(s.y), s.bomb ? 1 : 0, s.owner]),
     f: game.fires.map(f => [f.id, r1(f.x), r1(f.y), KINDS.indexOf(f.kind), r1(Math.atan2(f.vy, f.vx))]),
-    dh: game.boss.hp, hn: game.boss.hitN, th: game.tents.map(t => t.h) });
+    dh: game.bosses.map(b => b.hp), hn: game.bosses.map(b => b.hitN), dd: game.bosses.map(b => b.dead ? 1 : 0), th: game.tents.map(t => t.h) });
 }
 function onBossNet(d, c){
   if (!d || !d.t) return;
@@ -3027,17 +3170,20 @@ function onBossNet(d, c){
       });
       if (game.phase !== 'over') {
         game.fires = d.f.map(([id, x, y, k, a]) => ({ id, x, y, kind: KINDS[k] || 'fire', a, vx: 0, vy: 0 }));
-        game.boss.hp = d.dh; game.boss.hitN = d.hn;
+        game.bosses.forEach((b, i) => {
+          b.hp = d.dh[i]; b.hitN = d.hn[i];
+          if (d.dd && d.dd[i] && !b.dead) { b.dead = true; b.deadT = 0; }
+        });
         if (d.th) d.th.forEach((h, i) => { if (game.tents[i]) game.tents[i].h = h; });
       }
       break;
     }
     case 'bex': applyBossFx(d); break;
-    case 'bfx': bossMouthFx(d.h, d.f); break;
+    case 'bfx': useBoss(d.bi || 0); bossMouthFx(d.h, d.f); break;
     case 'fire': fireFx(d.side, !!d.b); break;
     case 'fly': sfx.fly(); break;
     case 'bar': sfx.barrier(); break;
-    case 'bfire': bossMouthFx(d.h, d.f); break;
+    case 'bfire': useBoss(d.bi || 0); bossMouthFx(d.h, d.f); break;
     case 'bover': bossFinish(d.rank, d.totals); break;
     case 'bend': if (d.totals) game.totals = d.totals; showTotalResult(); break;
   }
@@ -3066,6 +3212,11 @@ $('btnBossNext').onclick = () => {   // 同じメンバーで次のボスへ（�
   const idx = game.bossIdx + 1;
   if (game.role === 'solo') startBoss({ role: 'solo', roster: bossSoloRoster, you: 0, idx, totals: game.totals, lap: game.lap });
   else if (game.role === 'host') bossHostStart(idx, game.lap);
+};
+$('btnBossFinal').onclick = () => {   // 2周目の3体を倒した後にだけ押せる
+  if (!game || game.phase !== 'over' || game.lap !== 1 || game.bossIdx !== BOSSES.length - 1) return;
+  if (game.role === 'solo') startBoss({ role: 'solo', roster: bossSoloRoster, you: 0, idx: 0, totals: game.totals, lap: 2 });
+  else if (game.role === 'host') bossHostStart(0, 2);
 };
 $('btnBossLap2').onclick = () => {   // 1周目の3体を倒した後にだけ押せる
   if (!game || game.phase !== 'over' || game.lap || game.bossIdx !== BOSSES.length - 1) return;
