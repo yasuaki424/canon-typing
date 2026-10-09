@@ -116,6 +116,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
           <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
           <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）</li>
           <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
+          <li><code>turn</code> … 戦車の向きを反転（ボスチャレンジの Final War でのみ使用可）</li>
           <li><b>ボスチャレンジ</b> … 1〜8人で協力して3体のボスに順番に挑戦（倒すと次へ進める）。ドラゴンは触手がまっすぐな弾を防ぐので山なりに撃とう。当てた数でランキング</li>
           <li>入力は <b>半角英数モード（IMEオフ）</b> で。すべて <kbd>Enter</kbd> で確定</li>
         </ul>
@@ -192,7 +193,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
     <div id="inputLine"><span class="prompt">&gt;</span><span id="typed"></span><span class="caret"></span></div>
     <button id="btnFull" title="全画面表示の切り替え">⛶ 全画面</button>
     <div id="msg"></div>
-    <div id="help"><b>up</b>/<b>down</b> 角度・<b>forward</b>/<b>back</b> 移動・<b>fly</b> 飛行・<b>fire</b> 発射・<b>bomb</b> 榴弾・<b>barrier</b> バリア ／ <b>Enter</b>で確定</div>
+    <div id="help"><b>up</b>/<b>down</b> 角度・<b>forward</b>/<b>back</b> 移動・<b>fly</b> 飛行・<b>fire</b> 発射・<b>bomb</b> 榴弾・<b>barrier</b> バリア・<b>turn</b> 向き反転(Final War) ／ <b>Enter</b>で確定</div>
   </div>
 </div>
 
@@ -213,7 +214,7 @@ const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 2.5, MOVE_SPEED = 260; // forward/ba
 const X_MIN = 50, X_MAX = W / 2 - 160;                             // 自陣内のみ移動可
 const FLY_H = H / 4, FLY_T = 3, FLY_SPEED = 380;                   // fly: 画面1/4上昇・3秒
 const PREVIEW_T = 0.6;                  // 予測軌道を表示する時間(秒)
-const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire'];
+const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire', 'turn'];
 const PEER_PREFIX = 'canon-typing-v3-';
 const DIFFS = {
   baby:   { label: 'BABY', desc: '👶 baby：単語の最初の3文字だけ入力すればOK。正解するとその場で砲弾1発を自動発射。バリアは弾なしでいつでも3秒' },
@@ -1163,6 +1164,9 @@ function doCommand(side, c){
   if (t.dead || game.phase !== 'play') return 'ng';
   switch (c) {
     case 'up':   t.angle = Math.min(ANG_MAX, t.angle + ANG_STEP); return 'ok';
+    case 'turn':   // 戦車の向きを反転（Final War のみ。背後のボスを攻撃するため）
+      if (!game.final) return 'ng';
+      t.dir = -t.dir; return 'ok';
     case 'down': t.angle = Math.max(ANG_MIN, t.angle - ANG_STEP); return 'ok';
     case 'forward': case 'back': {
       const [lo, hi] = moveLimits(side), d = (c === 'forward' ? 1 : -1) * t.dir * MOVE_STEP;
@@ -1422,6 +1426,7 @@ function submit(){
     else if ((c === 'fire' || (c === 'barrier' && d !== 'baby')) && me.ammo <= 0) err = '砲弾が装填されていません';
     else if (c === 'bomb' && me.bombs <= 0) err = `榴弾がありません（${STREAK_FOR_BOMB}連続正解で獲得）`;
     else if (c === 'fly' && me.flyT > 0) err = 'すでに飛行中です';
+    else if (c === 'turn' && !game.final) err = 'turn は Final War でのみ使えます';
     else if (me.dead) err = '';
     if (err !== null) { sfx.wrong(); if (err) setMsg(err, 'bad'); }
     else {
@@ -1430,9 +1435,9 @@ function submit(){
       if (isGuest()) netSend({ t: 'cmd', c }); else res = doCommand(game.mySide, c);
       if (res === 'limit') { sfx.wrong(); setMsg('これ以上は移動できません', 'bad'); }
       else {
-        if (c === 'up' || c === 'down') sfx.cmd();
+        if (c === 'up' || c === 'down' || c === 'turn') sfx.cmd();
         if (c === 'forward' || c === 'back') sfx.move();
-        const label = { up: '砲塔 ▲', down: '砲塔 ▼', forward: '前進 ▶', back: '◀ 後退', fly: 'ヘリコプターで上昇！',
+        const label = { turn: '↔ 向きを反転！', up: '砲塔 ▲', down: '砲塔 ▼', forward: '前進 ▶', back: '◀ 後退', fly: 'ヘリコプターで上昇！',
           fire: `発射！ ×${n}`, bomb: '榴弾発射！', barrier: `バリア展開！ ${(d === 'baby' ? 1 : n) * BAR_PER_SHELL}秒` }[c];
         setMsg(label, 'cmd');
       }
@@ -3124,7 +3129,7 @@ function bossHostLost(){
 function bossSendState(){
   netSend({ t: 'bs',
     k: game.tanks.map(t => [r1(t.angle), t.hp, t.ammo, r1(t.barrier), r1(t.x), r1(t.alt), r1(t.flyT), t.bombs, t.streak,
-                            t.dead ? 1 : 0, t.ghost ? 1 : 0, t.hits]),
+                            t.dead ? 1 : 0, t.ghost ? 1 : 0, t.hits, t.dir]),
     s: game.shells.map(s => [s.id, r1(s.x), r1(s.y), s.bomb ? 1 : 0, s.owner]),
     f: game.fires.map(f => [f.id, r1(f.x), r1(f.y), KINDS.indexOf(f.kind), r1(Math.atan2(f.vy, f.vx))]),
     dh: game.bosses.map(b => b.hp), hn: game.bosses.map(b => b.hitN), dd: game.bosses.map(b => b.dead ? 1 : 0), th: game.tents.map(t => t.h) });
@@ -3160,7 +3165,7 @@ function onBossNet(d, c){
       d.k.forEach((k, i) => {
         const t = game.tanks[i]; if (!t) return;
         [t.angle, t.hp, t.ammo, t.barrier, t.x, t.alt, t.flyT, t.bombs, t.streak] = k;
-        t.dead = !!k[9]; t.ghost = !!k[10]; t.hits = k[11];
+        t.dead = !!k[9]; t.ghost = !!k[10]; t.hits = k[11]; if (k[12]) t.dir = k[12];
       });
       const prev = new Map(game.shells.map(s => [s.id, s]));
       game.shells = d.s.map(([id, x, y, b, owner]) => {
