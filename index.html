@@ -243,7 +243,8 @@ const DR_NECKS = [[-70, -115], [-28, -135], [28, -135], [70, -115]];
 const TENT_X = [205, 228, 251], TENT_H = [320, 280, 240], TENT_HW = 12;
 const TENT_DMG = 14, TENT_BOMB_DMG = 36;   // 1発で14px、榴弾で36px縮む（戦車の防御壁より壊れにくい）
 // 巨大蛾（空中に浮かぶ）とケルベロスの形
-const MOTH_Y = -250, BOSS_GROUND = 560;
+const MOTH_Y = -250, BOSS_GROUND = 560, BOSS_GROUND_MIN = 440;
+const BOSS_RAISE = 20;   // 地上のボスは、戦車側でいちばん高い地面より最大20pxまでしか低くならない
 const CB_BODY = { y: -70, rx: 100, ry: 52 };
 const CB_HEADS = [[-115, -175], [0, -205], [115, -175]];
 const CB_NECKS = [[-45, -100], [0, -112], [45, -100]];
@@ -1978,8 +1979,17 @@ function pickHead(tx){   // 狙う側に向いている頭を選ぶ
 function startBoss({ role, seed, roster, you, idx = 0, totals = null }){
   if (seed == null) seed = (Math.random() * 1e9) | 0;
   const def = BOSSES[idx];
-  // ボスの足元を平らにする（上部の表示と重ならないよう、地面の高さは一定以上低くする）
-  const ter = genTerrain(seed), h = ter.h, c = W / 2, p = Math.max(h[c], BOSS_GROUND);
+  // ボスの足元を平らにする
+  //  蛾：空中に浮かぶので、上部の表示と重ならないよう地面を低めにする
+  //  地上のボス：戦車側でいちばん高い地面と同じ高さまで持ち上げる（まっすぐな弾が届くように）。高すぎて表示と重なるのも防ぐ
+  const ter = genTerrain(seed), h = ter.h, c = W / 2;
+  let p;
+  if (def.type === 'moth') p = Math.max(h[c], BOSS_GROUND);
+  else {
+    let top = H;
+    for (let x = 220; x <= c - 190; x += 5) top = Math.min(top, h[x], h[W - x]);
+    p = Math.max(BOSS_GROUND_MIN, Math.min(h[c], top + BOSS_RAISE));
+  }
   for (let x = 0; x <= W; x++) {
     const dd = Math.abs(x - c);
     if (dd <= 190) h[x] = p;
