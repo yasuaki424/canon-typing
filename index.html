@@ -240,11 +240,11 @@ const DR_BODY = { y: -80, rx: 115, ry: 70 };
 const DR_HEADS = [[-150, -225], [-62, -278], [62, -278], [150, -225]];
 const DR_NECKS = [[-70, -115], [-28, -135], [28, -135], [70, -115]];
 // 触手の防御壁：ドラゴンの左右に3本ずつ。内側ほど高く、まっすぐな弾は通さない（山なりの弾だけが本体に届く）
-const TENT_X = [205, 228, 251], TENT_H = [320, 280, 240], TENT_HW = 12;
+const TENT_X = [205, 228, 251], TENT_H = [240, 210, 180], TENT_HW = 12;   // ドラゴンは丘の上に立つので、その分だけ低め
 const TENT_DMG = 14, TENT_BOMB_DMG = 36;   // 1発で14px、榴弾で36px縮む（戦車の防御壁より壊れにくい）
 // 巨大蛾（空中に浮かぶ）とケルベロスの形
 const MOTH_Y = -250, BOSS_GROUND = 560, BOSS_GROUND_MIN = 440;
-const BOSS_RAISE = 20;   // 地上のボスは、戦車側でいちばん高い地面より最大20pxまでしか低くならない
+const BOSS_LIFT = 60;    // 地上のボスは、戦車側でいちばん高い地面より60px高い丘の上に立つ
 const CB_BODY = { y: -70, rx: 100, ry: 52 };
 const CB_HEADS = [[-115, -175], [0, -205], [115, -175]];
 const CB_NECKS = [[-45, -100], [0, -112], [45, -100]];
@@ -1011,14 +1011,14 @@ layout();
 // ====================================================================
 //  地形・戦車・防御壁
 // ====================================================================
-function genTerrain(seed){
+function genTerrain(seed, boss = false){   // boss=true：必ず凹凸があり、両端も平らにしない
   const r = mulberry32(seed), h = new Float32Array(W + 1);
-  const flat = r() < 0.25, base = 560 + r() * 40;
+  const flat = r() < 0.25 && !boss, base = 560 + r() * 40;
   if (flat) {
     const slope = (r() - .5) * 80;
     for (let x = 0; x <= W; x++) h[x] = base + slope * (x / W - .5);
   } else {
-    const comps = []; let budget = 150;
+    const comps = []; let budget = boss ? 170 : 150;
     const n = 2 + Math.floor(r() * 2);
     for (let i = 0; i < n; i++) {
       const amp = budget * (.35 + r() * .4); budget -= amp;
@@ -1026,7 +1026,7 @@ function genTerrain(seed){
     }
     for (let x = 0; x <= W; x++) { let y = base; for (const c of comps) y += c.amp * Math.sin(c.k * x + c.p); h[x] = y; }
   }
-  for (const side of [0, 1]) {  // 初期位置と防御壁の周辺を平らにする
+  if (!boss) for (const side of [0, 1]) {  // 初期位置と防御壁の周辺を平らにする
     const P = 440, B = 110, p = h[side ? W - START_X : START_X];
     for (let x = 0; x <= W; x++) {
       const d = side ? W - x : x;
@@ -1981,14 +1981,16 @@ function startBoss({ role, seed, roster, you, idx = 0, totals = null }){
   const def = BOSSES[idx];
   // ボスの足元を平らにする
   //  蛾：空中に浮かぶので、上部の表示と重ならないよう地面を低めにする
-  //  地上のボス：戦車側でいちばん高い地面と同じ高さまで持ち上げる（まっすぐな弾が届くように）。高すぎて表示と重なるのも防ぐ
-  const ter = genTerrain(seed), h = ter.h, c = W / 2;
+  //  地上のボス：戦車側でいちばん高い地面より BOSS_LIFT だけ高い丘の上に立たせる（攻撃が届きやすい高さ）。
+  //  丘が高すぎて上部の表示と重なるときは、地形全体を下にずらす
+  const ter = genTerrain(seed, true), h = ter.h, c = W / 2;
   let p;
   if (def.type === 'moth') p = Math.max(h[c], BOSS_GROUND);
   else {
     let top = H;
     for (let x = 220; x <= c - 190; x += 5) top = Math.min(top, h[x], h[W - x]);
-    p = Math.max(BOSS_GROUND_MIN, Math.min(h[c], top + BOSS_RAISE));
+    p = top - BOSS_LIFT;
+    if (p < BOSS_GROUND_MIN) { const sh = BOSS_GROUND_MIN - p; for (let x = 0; x <= W; x++) h[x] = Math.min(H - 30, h[x] + sh); p = BOSS_GROUND_MIN; }
   }
   for (let x = 0; x <= W; x++) {
     const dd = Math.abs(x - c);
