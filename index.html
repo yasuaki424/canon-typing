@@ -213,7 +213,8 @@ const ANG_STEP = 3, ANG_MIN = 5, ANG_MAX = 80, BARREL = 32;
 const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 2.5, MOVE_SPEED = 260; // forward/back で戦車2.5台分
 const X_MIN = 50, X_MAX = W / 2 - 160;                             // 自陣内のみ移動可
 const FLY_H = H / 4, FLY_T = 3, FLY_SPEED = 380;                   // fly: 画面1/4上昇・3秒
-const PREVIEW_T = 0.6;                  // 予測軌道を表示する時間(秒)
+const PREVIEW_T = 0.6;
+const PART_MAX = 900;                   // 画面上のパーティクル（火花・煙など）の上限                  // 予測軌道を表示する時間(秒)
 const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire', 'turn'];
 const PEER_PREFIX = 'canon-typing-v3-';
 const DIFFS = {
@@ -948,8 +949,14 @@ function audioInit(){
   }
   if (AC.state === 'suspended') AC.resume();
 }
+let sndN = 0, sndT0 = 0;
+function sndOk(){   // 0.1秒あたり最大14個まで
+  const t = performance.now();
+  if (t - sndT0 > 100) { sndT0 = t; sndN = 0; }
+  return ++sndN <= 14;
+}
 function tone(freq, dur, type = 'sine', vol = .2, when = 0, slideTo = null){
-  if (!AC) return;
+  if (!AC || !sndOk()) return;
   const t = AC.currentTime + when, o = AC.createOscillator(), g = AC.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
   if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
@@ -958,7 +965,7 @@ function tone(freq, dur, type = 'sine', vol = .2, when = 0, slideTo = null){
   o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + .02);
 }
 function noise(dur, vol, freq = 1000, when = 0){
-  if (!AC) return;
+  if (!AC || !sndOk()) return;
   const t = AC.currentTime + when, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
   s.buffer = noiseBuf; f.type = 'lowpass';
   f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(60, t + dur);
@@ -985,7 +992,9 @@ const sfx = {
 // ====================================================================
 //  画面レイアウト（どの画面サイズでも全体が収まるように縮尺を合わせる）
 // ====================================================================
-const cv = $('cv'), ctx = cv.getContext('2d');
+const cv = $('cv');
+let ctx = cv.getContext('2d');   // ボスを別キャンバスに描くときだけ一時的に切り替える
+const bossCv = document.createElement('canvas'), bossCtx = bossCv.getContext('2d');
 function layout(){
   const app = $('app'), panel = $('panel'), stage = $('stage');
   const cs = getComputedStyle(app);
@@ -1000,10 +1009,16 @@ function layout(){
     w = Math.max(280, Math.min(availW, availH * W / H));
   }
   stage.style.width = w + 'px'; stage.style.height = (w * H / W) + 'px'; panel.style.width = w + 'px';
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const dpr = Math.min(2, window.devicePixelRatio || 1) * renderQ;
   cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr * H / W);
 }
 window.addEventListener('resize', layout);
+// 描画が重い（1フレーム25ms超が続く）ときは解像度を段階的に下げる
+let renderQ = 1, slowT = 0;
+function watchSpeed(dtMs){
+  slowT = dtMs > 25 ? slowT + dtMs : Math.max(0, slowT - dtMs * .5);
+  if (slowT > 2500 && renderQ > .55) { renderQ = Math.max(.55, renderQ - .15); slowT = 0; layout(); }
+}
 document.addEventListener('fullscreenchange', () => {
   $('btnFull').textContent = document.fullscreenElement ? '⛶ 元に戻す' : '⛶ 全画面';
   setTimeout(layout, 50);
@@ -1473,6 +1488,7 @@ document.addEventListener('keydown', e => {
 // ====================================================================
 let last = performance.now();
 function frame(now){
+  if (!document.hidden && now - last < 200) watchSpeed(now - last);
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   if (game) update(dt);
   draw();
@@ -1492,6 +1508,7 @@ function update(dt){
   updateTanks(dt);
   for (const p of game.parts) { p.life -= dt; if (p.ring) continue; p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
   game.parts = game.parts.filter(p => p.life > 0);
+  if (game.parts.length > PART_MAX) game.parts.splice(0, game.parts.length - PART_MAX);   // 古いものから捨てる
   for (const f of game.floats) { f.life -= dt; f.y -= 30 * dt; }
   game.floats = game.floats.filter(f => f.life > 0);
   game.shake = Math.max(0, game.shake - dt * 30);
@@ -1667,10 +1684,8 @@ function drawTank(t, now){
     ctx.beginPath(); ctx.ellipse(t.x, gy, 26 * sc, 5 * sc, 0, 0, Math.PI * 2); ctx.fill();
   }
   ctx.save(); ctx.translate(t.x, t.y + (isFlying(t) ? Math.sin(now * 5) * 2 * sc : 0)); ctx.scale(sc, sc);
-  if (t.dead) ctx.filter = 'grayscale(1) brightness(.4)';
-  isFlying(t) && !t.dead ? drawHeli(t, col) : drawTankBody(t, col);
-  if (t.flash > 0 && !t.dead) { ctx.globalAlpha = t.flash * 1.6; ctx.fillStyle = '#fff'; rr(-30, -38, 60, 40, 6); ctx.fill(); ctx.globalAlpha = 1; }
-  ctx.filter = 'none';
+  isFlying(t) && !t.dead ? drawHeli(t, col) : drawTankBody(t, t.dead ? ['#374151', '#1f2937', '#4b5563'] : col);   // やられた戦車は暗い色で
+  if (t.flash > 0 && !t.dead) { ctx.globalAlpha = Math.min(1, t.flash * 1.6); ctx.fillStyle = '#fff'; rr(-30, -38, 60, 40, 6); ctx.fill(); ctx.globalAlpha = 1; }
   ctx.restore();
 
   // バリア（泡）
@@ -2134,7 +2149,8 @@ function bossUpdate(dt){
       game.parts.push({ x: m.x, y: m.y, vx: rnd(-15, 15), vy: rnd(-50, -25), life: rnd(.8, 1.4), max: 1.4, size: rnd(6, 12), color: '#4b5563', g: -10, smoke: true });
     }
   });
-  for (const f of game.fires) {
+  game.fxTick = (game.fxTick || 0) + 1;
+  if (game.fxTick % 2) for (const f of game.fires) {
     const col = TRAIL_COL[f.kind] || TRAIL_COL.fire;
     game.parts.push({ x: f.x + rnd(-4, 4), y: f.y + rnd(-4, 4), vx: rnd(-30, 30), vy: rnd(-40, 10),
       life: rnd(.2, .4), max: .4, size: f.kind === 'scale' ? rnd(2, 4) : rnd(3, 7), color: col[Math.floor(Math.random() * 3)], g: f.kind === 'scale' ? 30 : -80 });
@@ -2578,18 +2594,43 @@ function hitTanksFx(ev){
 }
 
 // ---------- ボスの描画 ----------
+// ボスごとの描画範囲（中心からの距離、元の大きさでの値）
+const BOSS_BOX = { dragon: [-290, -350, 290, 30], cerb: [-210, -275, 210, 20], moth: [-295, -220, 295, 330] };
+// 色付け（2周目＝赤、Final War＝青、撃破＝暗く、被弾＝白く光る）は ctx.filter を使わず、
+// 別キャンバスに描いた絵の上に半透明の色を重ねてから画面に貼り付ける（filter は非常に重いため）
+function bossTints(d){
+  const t = [];
+  if (d.lap === 2) t.push('rgba(40,110,255,.42)'); else if (d.lap) t.push('rgba(255,35,35,.38)');
+  if (d.dead) t.push('rgba(18,18,24,.66)'); else if (d.flash > 0) t.push('rgba(255,255,255,.55)');
+  return t;
+}
+function drawBossShape(d, now){ if (d.type === 'moth') drawMoth(now); else if (d.type === 'cerb') drawCerb(now); else drawDragon(now); }
 function drawBoss(now){
   game.bosses.forEach(d => {
     game.boss = d;
     if (d.fin && d.dead && d.deadT > 8) return;   // 完全に沈んだら描かない
-    ctx.save();
-    if (d.fin && d.dead) ctx.translate(0, Math.max(0, d.deadT - (d.type === 'moth' ? 1.2 : .4)) * 70);   // 地面に沈む
-    if (d.sc && d.sc !== 1) { const o = bossPivot(); ctx.translate(o.x, o.y); ctx.scale(d.sc, d.sc); ctx.translate(-o.x, -o.y); }
-    if (d.lap === 2) ctx.filter = FINAL_FILTER;   // Final War は青みがかった色
-    else if (d.lap) ctx.filter = LAP2_FILTER;     // 2周目は赤みがかった色
-    if (d.type === 'moth') drawMoth(now); else if (d.type === 'cerb') drawCerb(now); else drawDragon(now);
-    ctx.restore();
-    if (d.fin && d.dead) drawGroundOver(d.x - 320 * d.sc, d.x + 320 * d.sc);   // 沈んだ部分を地面で隠す
+    const o = bossPivot(), sc = d.sc || 1, sinkY = d.fin && d.dead ? Math.max(0, d.deadT - (d.type === 'moth' ? 1.2 : .4)) * 70 : 0;
+    const tints = bossTints(d);
+    if (!tints.length) {   // 色付けなし：そのまま描く
+      ctx.save();
+      if (sc !== 1) { ctx.translate(o.x, o.y); ctx.scale(sc, sc); ctx.translate(-o.x, -o.y); }
+      drawBossShape(d, now);
+      ctx.restore();
+    } else {
+      const [l, t, r, b] = BOSS_BOX[d.type], S = cv.width / W * sc;
+      const pw = Math.max(1, Math.ceil((r - l) * S)), ph = Math.max(1, Math.ceil((b - t) * S));
+      if (bossCv.width < pw || bossCv.height < ph) { bossCv.width = Math.max(bossCv.width, pw); bossCv.height = Math.max(bossCv.height, ph); }
+      bossCtx.setTransform(1, 0, 0, 1, 0, 0); bossCtx.clearRect(0, 0, pw + 2, ph + 2);
+      bossCtx.setTransform(S, 0, 0, S, -(l + o.x) * S, -(t + o.y) * S);
+      const main = ctx; ctx = bossCtx;
+      try { drawBossShape(d, now); } finally { ctx = main; }
+      bossCtx.setTransform(1, 0, 0, 1, 0, 0);
+      bossCtx.globalCompositeOperation = 'source-atop';   // 描かれた部分にだけ色を重ねる
+      for (const c of tints) { bossCtx.fillStyle = c; bossCtx.fillRect(0, 0, pw, ph); }
+      bossCtx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(bossCv, 0, 0, pw, ph, o.x + l * sc, o.y + t * sc + sinkY, pw / (cv.width / W), ph / (cv.width / W));
+    }
+    if (d.fin && d.dead) drawGroundOver(d.x - 320 * sc, d.x + 320 * sc);   // 沈んだ部分を地面で隠す
   });
 }
 function drawGroundOver(x0, x1){
@@ -2607,10 +2648,7 @@ function drawGroundOver(x0, x1){
   for (let x = x0; x <= x1; x += 4) x === x0 ? ctx.moveTo(x, h[x]) : ctx.lineTo(x, h[x]);
   ctx.stroke();
 }
-function bossFilter(d){
-  if (d.dead) ctx.filter = 'grayscale(1) brightness(.45)';
-  else if (d.flash > 0) ctx.filter = 'brightness(2.2)';
-}
+function bossFilter(d){}   // 色付けは drawBoss でまとめて行う
 const EYE_COL = ['#fde047', '#fb923c', '#ef4444'];
 function drawDragon(now){
   const d = game.boss, X = d.x, Y = d.gy;
@@ -2671,7 +2709,7 @@ function drawDragonHead(x, y, f, glow, now, i){
 function drawEye(x, y, rx, ry, cols = EYE_COL){
   const st = game.boss.stage;
   ctx.save();
-  if (st > 0) { ctx.shadowColor = st === 2 ? '#ef4444' : '#fb923c'; ctx.shadowBlur = 10 + st * 6; }
+  if (st > 0) { ctx.fillStyle = st === 2 ? 'rgba(239,68,68,.35)' : 'rgba(251,146,60,.3)'; ctx.beginPath(); ctx.ellipse(x, y, rx * 2, ry * 2, 0, 0, Math.PI * 2); ctx.fill(); }
   ctx.fillStyle = cols[st]; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
@@ -2810,10 +2848,11 @@ function drawLasers(now){
       mouthGlow(L.x0, L.y0, 10 + 26 * k, red ? 'red' : 'fire');
     } else {   // 照射
       const k = clamp(L.dur === LASER_LIFE ? L.life / L.dur : Math.min(1, L.life / .4), 0, 1), w = LASER_W * (0.6 + 0.4 * k) + Math.sin(now * 60) * 2;
-      ctx.shadowColor = red ? '#ef4444' : '#ff5400'; ctx.shadowBlur = 30;
-      ctx.strokeStyle = red ? `rgba(220,20,20,${.75 * k + .2})` : `rgba(255,90,20,${.75 * k + .2})`; ctx.lineWidth = w * 2;
+      ctx.strokeStyle = red ? `rgba(239,68,68,${.25 * k})` : `rgba(255,84,0,${.25 * k})`; ctx.lineWidth = w * 4;   // 外側のぼんやりした光
       ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
-      ctx.shadowBlur = 0; ctx.strokeStyle = red ? `rgba(255,120,120,${k})` : `rgba(255,220,120,${k})`; ctx.lineWidth = w;
+      ctx.strokeStyle = red ? `rgba(220,20,20,${.75 * k + .2})` : `rgba(255,90,20,${.75 * k + .2})`; ctx.lineWidth = w * 2;
+      ctx.stroke();
+      ctx.strokeStyle = red ? `rgba(255,120,120,${k})` : `rgba(255,220,120,${k})`; ctx.lineWidth = w;
       ctx.stroke();
       ctx.strokeStyle = `rgba(255,255,255,${k})`; ctx.lineWidth = w * .35; ctx.stroke();
     }
@@ -2834,9 +2873,8 @@ function drawTentacles(now){
       pts.push({ x: t.x + sway, y, w: (TENT_HW + 2) * (1 - u * .65) });
     }
     ctx.save();
-    if (t.flash > 0) ctx.filter = 'brightness(1.8)';
-    const g = ctx.createLinearGradient(t.x - 14, 0, t.x + 14, 0);
-    g.addColorStop(0, '#6b21a8'); g.addColorStop(.5, '#a855f7'); g.addColorStop(1, '#6b21a8');
+    const g = ctx.createLinearGradient(t.x - 14, 0, t.x + 14, 0), fl = t.flash > 0;   // 被弾中は明るい色
+    g.addColorStop(0, fl ? '#c084fc' : '#6b21a8'); g.addColorStop(.5, fl ? '#f5d0fe' : '#a855f7'); g.addColorStop(1, fl ? '#c084fc' : '#6b21a8');
     ctx.fillStyle = g; ctx.beginPath();
     pts.forEach((p, k) => k ? ctx.lineTo(p.x - p.w, p.y) : ctx.moveTo(p.x - p.w, p.y));
     for (let k = n; k >= 0; k--) ctx.lineTo(pts[k].x + pts[k].w, pts[k].y);
@@ -2860,7 +2898,7 @@ function drawFires(now){
     if (k === 'wave' || k === 'fang') {   // まっすぐ飛ぶ弾は進行方向に向けて描く
       const a = f.a != null ? f.a : Math.atan2(f.vy, f.vx);
       ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(a);
-      ctx.shadowColor = k === 'wave' ? '#67e8f9' : '#ef4444'; ctx.shadowBlur = 18;
+      ctx.fillStyle = k === 'wave' ? 'rgba(103,232,249,.25)' : 'rgba(239,68,68,.25)'; ctx.beginPath(); ctx.arc(-8, 0, 30, 0, Math.PI * 2); ctx.fill();   // ぼんやりした光
       if (k === 'wave') {   // 半月型の刃
         ctx.fillStyle = 'rgba(224,242,254,.92)';
         ctx.beginPath(); ctx.arc(-8, 0, 26, -1.25, 1.25); ctx.arc(-20, 0, 22, 1.1, -1.1, true); ctx.closePath(); ctx.fill();
