@@ -2550,8 +2550,11 @@ function cpuUpdate(dt){
 // ====================================================================
 //  タイピング
 // ====================================================================
+// baby は3文字で自動発射するので、最初の3文字がコマンドの打ち始めと同じ単語（first, forest など）は出さない
+const babySafe = w => !COMMANDS.some(c => c.startsWith(w.en.toLowerCase().slice(0, BABY_CHARS)));
 function nextWord(){
-  const list = WORDS[level]; let w;
+  const all = WORDS[level], baby = game && game.tanks && game.tanks[game.mySide] && myDiff() === 'baby';
+  const list = baby ? all.filter(babySafe) : all; let w;
   do { w = list[Math.floor(Math.random() * list.length)]; } while (typing.recent.includes(w.en) && list.length > 12);
   typing.recent.push(w.en); if (typing.recent.length > 10) typing.recent.shift();
   typing.word = w; typing.input = ''; typing.start = performance.now(); typing.rep = 0;
