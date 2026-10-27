@@ -115,7 +115,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
           <li><code>forward</code> / <code>back</code> … 戦車を前進 / 後退（戦車2.5台分）</li>
           <li><code>fly</code> … ヘリコプターに変身して3秒間上昇（飛行中も攻撃可能）</li>
           <li><code>fire</code> … 装填済みの砲弾をまとめてクラスター発射（問題の途中でもOK）。<kbd>Shift</kbd>+<kbd>F</kbd> でも発射できます</li>
-          <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code> … 装填済みの弾でバリア展開（1発につき3秒）</li>
+          <li><code>bomb</code> … 榴弾を1発発射　／　<code>barrier</code>（または <kbd>Shift</kbd>+<kbd>B</kbd>）… 装填済みの弾でバリア展開（1発につき15秒）</li>
           <li><code>turn</code> … 戦車の向きを反転（ボスチャレンジの Final War でのみ使用可）</li>
           <li><b>ボスチャレンジ</b> … 1〜8人で協力して3体のボスに順番に挑戦（倒すと次へ進める）。ドラゴンは触手がまっすぐな弾を防ぐので山なりに撃とう。当てた数でランキング</li>
           <li>入力は <b>半角英数モード（IMEオフ）</b> で。すべて <kbd>Enter</kbd> で確定</li>
@@ -209,7 +209,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
     <div id="inputLine"><span class="prompt">&gt;</span><span id="typed"></span><span class="caret"></span></div>
     <button id="btnFull" title="全画面表示の切り替え">⛶ 全画面</button>
     <div id="msg"></div>
-    <div id="help"><b>up</b>/<b>down</b> 角度・<b>forward</b>/<b>back</b> 移動・<b>fly</b> 飛行・<b>fire</b>/<b>Shift+F</b> 発射・<b>bomb</b> 榴弾・<b>barrier</b> バリア・<b>turn</b> 向き反転(Final War) ／ <b>Enter</b>で確定</div>
+    <div id="help"><b>up</b>/<b>down</b> 角度・<b>forward</b>/<b>back</b> 移動・<b>fly</b> 飛行・<b>fire</b>/<b>Shift+F</b> 発射・<b>bomb</b> 榴弾・<b>barrier</b>/<b>Shift+B</b> バリア・<b>turn</b> 向き反転(Final War) ／ <b>Enter</b>で確定</div>
   </div>
 </div>
 
@@ -223,7 +223,7 @@ const G = 400, V = 850;                 // 重力・初速(px/s)
 const START_X = 300, WALL_GAP = 58, WALL_W = 36, WALL_H = 152, CELL = 4;
 const HP_MAX = 100, DMG = 10, BOMB_DMG = 20;          // 砲弾10発で撃破 / 榴弾は2倍
 const DMG_R = 40, CARVE_R = 18, BOMB_CARVE_R = 30, CRATER_R = 55;
-const BAR_R = 58, BAR_PER_SHELL = 3;
+const BAR_R = 58, BAR_PER_SHELL = 15;   // バリア：弾1発につき15秒（baby は弾なしで15秒）
 const MAX_AMMO = 5, MAX_BOMBS = 3, STREAK_FOR_BOMB = 5;
 const ANG_STEP = 3, ANG_MIN = 5, ANG_MAX = 80, BARREL = 32;
 const TANK_LEN = 56, MOVE_STEP = TANK_LEN * 2.5, MOVE_SPEED = 260; // forward/back で戦車2.5台分
@@ -234,7 +234,7 @@ const PART_MAX = 900;                   // 画面上のパーティクル（火�
 const COMMANDS = ['up', 'down', 'forward', 'back', 'fly', 'fire', 'bomb', 'barrier', 'barrire', 'turn'];
 const PEER_PREFIX = 'canon-typing-v3-';
 const DIFFS = {
-  baby:   { label: 'BABY', desc: '👶 baby：単語の最初の3文字だけ入力すればOK。正解するとその場で砲弾1発を自動発射。バリアは弾なしでいつでも3秒' },
+  baby:   { label: 'BABY', desc: '👶 baby：単語の最初の3文字だけ入力すればOK。正解するとその場で砲弾1発を自動発射。バリアは弾なしでいつでも15秒' },
   normal: { label: '',     desc: 'normal：単語を入力して砲弾を装填（最大5発）。fire でまとめて発射' },
   hell:   { label: 'HELL', desc: '😈 hell：同じ単語を3回入力して1発装填。耐久力は半分からスタート。そのかわり攻撃力2倍' },
 };
@@ -1217,7 +1217,7 @@ function doCommand(side, c){
       if (t.ammo <= 0) return 'empty';
       fireShots(side, t.ammo); t.ammo = 0; return 'ok';
     case 'barrier':
-      if (t.diff === 'baby') {   // baby：弾数に関係なく3秒（重ねがけ不可）
+      if (t.diff === 'baby') {   // baby：弾数に関係なく15秒（重ねがけ不可）
         if (t.barrier > 0) return 'active';
         t.barrier = BAR_PER_SHELL; sfx.barrier();
         if (isHost()) netSend({ t: 'bar', side });
@@ -1487,9 +1487,11 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.isComposing || e.key === 'Process') { setMsg('IMEをオフ（半角英数）にしてください', 'bad'); return; }
   if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
-  if (e.shiftKey && (e.key === 'F' || e.key === 'f')) {   // Shift+F：fire と同じ（打ちかけの文字はそのまま残す）
+  // Shift+F：fire、Shift+B：barrier と同じ（打ちかけの文字はそのまま残す）
+  const sc = e.shiftKey && { f: 'fire', b: 'barrier' }[e.key.toLowerCase()];
+  if (sc) {
     e.preventDefault();
-    const keep = typing.input; typing.input = 'fire'; submit(); typing.input = keep; renderPanel();
+    const keep = typing.input; typing.input = sc; submit(); typing.input = keep; renderPanel();
     return;
   }
   if (e.key === 'Backspace') { e.preventDefault(); typing.input = typing.input.slice(0, -1); }
