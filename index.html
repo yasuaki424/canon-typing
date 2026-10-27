@@ -15,7 +15,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:8px 12px}
 #stage{position:relative;flex:none;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 10px 40px rgba(0,0,0,.5)}
 canvas{display:block;width:100%;height:100%}
-.overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+.overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;justify-content:safe center;
   gap:min(14px,2vh);background:rgba(8,12,24,.72);backdrop-filter:blur(3px);text-align:center;padding:12px;overflow:auto}
 .overlay.show{display:flex}
 h1{margin:0;font-size:clamp(28px,min(6vw,9vh),80px);letter-spacing:.04em;font-weight:900;
@@ -100,7 +100,7 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
         <button class="df sel" data-df="normal">normal</button>
         <button class="df" data-df="hell">😈 hell</button>
       </div>
-      <p class="sub" id="dfDesc"></p>
+      <p class="sub dfDesc" id="dfDesc"></p>
       <div class="row">
         <button class="primary" id="btnCpu">🤖 CPUと対戦</button>
         <button class="primary" id="btnOnline">🌐 オンライン対戦</button>
@@ -140,8 +140,24 @@ input.name{letter-spacing:normal;text-transform:none;width:220px}
     <!-- ボスチャレンジ ロビー -->
     <div class="overlay" id="ovBoss">
       <h2 style="font-size:clamp(24px,min(4vw,7vh),42px)">🐉 ボスチャレンジ</h2>
-      <p class="sub">1〜8人で協力して3体のボス（🦋 ジャイアントモス → 🐕 ケルベロス → 🐉 ドラゴン）に順番に挑もう！（問題レベル・難易度はトップページで選んだものを使います）</p>
+      <p class="sub">1〜8人で協力して3体のボス（🦋 ジャイアントモス → 🐕 ケルベロス → 🐉 ドラゴン）に順番に挑もう！ バトルの途中からでも参加できます</p>
       <div class="row"><span class="label">なまえ</span><input class="code name" id="bossName" maxlength="10" placeholder="なまえ" autocomplete="off" spellcheck="false"></div>
+      <div class="row">
+        <span class="label">問題レベル（英検）</span>
+        <button class="lv" data-lv="5">5級</button>
+        <button class="lv" data-lv="4">4級</button>
+        <button class="lv" data-lv="3">3級</button>
+        <button class="lv" data-lv="p2">準2級</button>
+        <button class="lv" data-lv="2">2級</button>
+        <button class="lv" data-lv="p1">準1級</button>
+      </div>
+      <div class="row">
+        <span class="label">難易度</span>
+        <button class="df" data-df="baby">👶 baby</button>
+        <button class="df" data-df="normal">normal</button>
+        <button class="df" data-df="hell">😈 hell</button>
+      </div>
+      <p class="sub dfDesc"></p>
       <div class="row" id="bossEntry">
         <button class="primary" id="btnBossSolo">ひとりで挑戦</button>
         <button class="primary" id="btnBossHost">部屋を作る</button>
@@ -224,7 +240,7 @@ const DIFFS = {
 };
 const HELL_REPEAT = 3, BABY_CHARS = 3;
 // ボスチャレンジ
-const BOSS_PREFIX = 'canon-typing-boss-v4-', BOSS_MAX = 8;
+const BOSS_PREFIX = 'canon-typing-boss-v5-', BOSS_MAX = 8;
 const BOSS_SC = 1 / 3, BOSS_V = 650;                    // 戦車は通常の1/3サイズ。距離が近いので初速を下げる
 const FIRE_DMG = 5, FIRE_R = 22;
 const BOSS_HP_MULT = 2;                                 // ボス戦の戦車は耐久力2倍（炎40発で壊れる。hell は20発）
@@ -1822,14 +1838,22 @@ function showResult(){
   net.myReady = false;
   show('ovResult');
 }
+// 問題レベル・難易度はトップページとボスチャレンジ画面の両方にあり、選ぶと両方に反映される
+function syncChoice(){
+  document.querySelectorAll('.lv').forEach(x => x.classList.toggle('sel', x.dataset.lv === level));
+  document.querySelectorAll('.df').forEach(x => x.classList.toggle('sel', x.dataset.df === difficulty));
+  document.querySelectorAll('.dfDesc').forEach(x => x.textContent = DIFFS[difficulty].desc);
+}
 document.querySelectorAll('.lv').forEach(b => b.onclick = () => {
-  level = b.dataset.lv; document.querySelectorAll('.lv').forEach(x => x.classList.toggle('sel', x === b));
+  level = b.dataset.lv; syncChoice();
 });
 document.querySelectorAll('.df').forEach(b => b.onclick = () => {
-  difficulty = b.dataset.df; document.querySelectorAll('.df').forEach(x => x.classList.toggle('sel', x === b));
-  $('dfDesc').textContent = DIFFS[difficulty].desc;
+  difficulty = b.dataset.df; syncChoice();
+  // ボスチャレンジの部屋に入っている場合は、次の戦いから新しい難易度になるようホストに伝える
+  if (net.boss && net.isHost && net.players) { net.players[0].diff = difficulty; if (net.runRoster && net.runRoster[0]) net.runRoster[0].diff = difficulty; }
+  else if (net.boss && net.conn) netSend({ t: 'bdiff', diff: difficulty });
 });
-$('dfDesc').textContent = DIFFS[difficulty].desc;
+syncChoice();
 $('btnCpu').onclick = () => { audioInit(); startGame({ mode: 'cpu' }); };
 $('btnOnline').onclick = () => { audioInit(); $('roomCode').textContent = ''; lobbyStatus(''); show('ovLobby'); };
 $('btnLobbyBack').onclick = () => goTitle();
@@ -2062,19 +2086,14 @@ function startBoss({ role, seed, roster, you, idx = 0, totals = null, lap = 0 })
     });
   });
   // 偶数番目は左の区間、奇数番目は右の区間に並べる（生きているボスはまたいで移動できない）
+  game.zones = zones; game.tankHi = c - nearOf(specs[0]);
   const sides = [[], []]; roster.forEach((_, i) => sides[i % 2].push(i));
   game.tanks = roster.map((pl, i) => {
     const lr = i % 2, k = sides[lr].indexOf(i), m = sides[lr].length;
     let x;
     if (fin) { const [a, b] = zones[lr]; x = a + (b - a) * (k + 1) / (m + 1); }
-    else { const hi = c - nearOf(specs[0]), x0 = 220 + (hi - 220) * (k + 1) / (m + 1); x = lr ? W - x0 : x0; }
-    const t = mkTank(lr, pl.diff);
-    t.hp *= BOSS_HP_MULT;
-    const hi = c - nearOf(specs[0]);
-    Object.assign(t, { side: i, x, tx: x, sc: BOSS_SC, v: BOSS_V, name: pl.name, color: pl.color, angle: 30,
-                       maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: fin ? 'dyn' : lr ? [W - hi, W - 40] : [40, hi] });
-    t.y = terrainAt(x);
-    return t;
+    else { const hi = game.tankHi, x0 = 220 + (hi - 220) * (k + 1) / (m + 1); x = lr ? W - x0 : x0; }
+    return mkBossTank(pl, i, x);
   });
   typing.times = []; typing.input = ''; typing.recent = [];
   nextWord();
@@ -2084,6 +2103,19 @@ function startBoss({ role, seed, roster, you, idx = 0, totals = null, lap = 0 })
   setMsg(fin ? 'READY…　⚔️ FINAL WAR！ 3体のボスを全部倒せ！ 倒したボスの上は通れるようになる'
          : lap ? `READY…　【2周目】${def.name} は最初から怒っている！ 気をつけろ！` : `READY…　ボス ${idx + 1}/3：${def.name} を倒そう！`, hard ? 'bad' : 'info');
   renderPanel();
+}
+function mkBossTank(pl, i, x){
+  const lr = i % 2, hi = game.tankHi, t = mkTank(lr, pl.diff);
+  t.hp *= BOSS_HP_MULT;
+  Object.assign(t, { side: i, x, tx: x, sc: BOSS_SC, v: BOSS_V, name: pl.name, color: pl.color, angle: 30,
+                     maxHp: t.hp, hits: 0, ghost: false, respawnT: 0, lim: game.final ? 'dyn' : lr ? [W - hi, W - 40] : [40, hi] });
+  t.y = terrainAt(x);
+  return t;
+}
+function joinSpawnX(i){   // 途中参加の戦車を置く位置（自分側の区間のどこか）
+  const lr = i % 2;
+  if (game.final) { const [a, b] = game.zones[lr]; return rnd(a + 20, b - 20); }
+  const x0 = rnd(240, game.tankHi - 20); return lr ? W - x0 : x0;
 }
 // 生きているボスはまたげない。倒されて沈んだボスの上は通れる
 function dynLim(t){
@@ -3151,12 +3183,42 @@ function bossHostStart(idx = 0, lap = 0){   // 1周目の1体目は新しい挑�
   net.players.forEach((p, i) => { if (p.conn && p.conn.open) p.conn.send({ t: 'bstart', seed, roster, you: i, idx, totals, lap }); });
   startBoss({ role: 'host', seed, roster, you: 0, idx, totals, lap });
 }
+// 途中参加：同じメンバー表の最後に加え、今の戦場の状態（地形・ボス・触手）を送って参加させる
+function bossMidJoin(pl, c){
+  const i = net.players.length - 1, rec = { name: pl.name, color: pl.color, diff: pl.diff };
+  c.pidx = i;
+  if (net.runRoster) net.runRoster.push(rec);
+  if (!game || game.mode !== 'boss') return;
+  game.totals.push(0);
+  if (game.phase === 'over') {   // ボスとボスの間：次のボスから参加
+    c.send({ t: 'bwait', players: net.players.map(p => ({ name: p.name, color: p.color })) });
+    setMsg(`${pl.name} さんが参加しました（次のボスから）`, 'info');
+    return;
+  }
+  const x = joinSpawnX(i);
+  game.tanks.push(mkBossTank(rec, i, x));
+  for (const o of net.conns) if (o !== c && o.open) o.send({ t: 'bjoin', pl: rec, x });
+  c.send({ t: 'bstart', seed: game.seed, roster: net.runRoster, you: i, idx: game.bossIdx, totals: game.totals, lap: game.lap,
+           mid: { terrain: Array.from(game.terrain, v => Math.round(v * 10) / 10), phase: game.phase, readyT: game.readyT,
+                  bosses: game.bosses.map(b => [b.hp, b.stage, b.dead ? 1 : 0, b.hitN, r1(b.deadT), b.max]), tents: game.tents.map(t => t.h),
+                  tanks: game.tanks.map(t => [r1(t.x), t.dir, t.hits, t.ghost ? 1 : 0]) } });
+  setMsg(`${pl.name} さんが途中参加しました！`, 'info');
+  addFloat(`${pl.name} 参戦！`, x, terrainAt(x) - 50, pl.color);
+}
 function bossConnClosed(c){
   if (!net.isHost || net.closing) return;
   net.conns = net.conns.filter(x => x !== c);
   const p = net.players.find(p => p.conn === c); if (!p) return;
   if (!net.started) { net.players = net.players.filter(x => x !== p); bossLobbyUpdate(); }
   else { p.left = true; if (game && game.mode === 'boss' && game.tanks[c.pidx]) setMsg(`${p.name} さんが退出しました`, 'info'); }
+}
+function applyMidJoin(m){   // 途中参加したときに今の戦場の状態を写す
+  m.terrain.forEach((v, x) => game.terrain[x] = v);
+  m.bosses.forEach(([hp, st, dead, hn, dt, mx], i) => { const b = game.bosses[i]; if (!b) return; b.hp = hp; b.max = mx || b.max; b.stage = st; b.hitN = hn; if (dead) { b.dead = true; b.deadT = dt; } });
+  m.tents.forEach((h, i) => { if (game.tents[i]) game.tents[i].h = h; });
+  m.tanks.forEach(([x, dir, hits, ghost], i) => { const t = game.tanks[i]; if (!t) return; t.x = t.tx = x; t.dir = dir; t.hits = hits; t.ghost = !!ghost; t.y = terrainAt(x); });
+  game.phase = m.phase === 'ready' ? 'ready' : 'play'; game.readyT = m.phase === 'ready' ? m.readyT : 0;
+  if (game.phase === 'play') { game.goT = .9; setMsg('途中参加しました！ 英単語を入力して攻撃しよう', 'info'); }
 }
 function bossHostLost(){
   const inLobby = $('ovBoss').classList.contains('show');
@@ -3182,11 +3244,17 @@ function onBossNet(d, c){
   if (net.isHost) {
     if (d.t === 'bhello') {
       const reject = m => { c.send({ t: 'bfull', m }); setTimeout(() => c.close(), 300); };
-      if (net.started) return reject('この部屋はすでにバトル中です');
       if (net.players.length >= BOSS_MAX) return reject(`満員です（最大${BOSS_MAX}人）`);
       const color = net.palette.find(x => !net.players.some(p => p.color === x));
-      net.players.push({ name: String(d.name || 'プレイヤー').slice(0, 10), color, diff: DIFFS[d.diff] ? d.diff : 'normal', conn: c });
-      net.conns.push(c); bossLobbyUpdate(); sfx.cmd();
+      const pl = { name: String(d.name || 'プレイヤー').slice(0, 10), color, diff: DIFFS[d.diff] ? d.diff : 'normal', conn: c };
+      net.players.push(pl); net.conns.push(c); sfx.cmd();
+      if (!net.started) { bossLobbyUpdate(); return; }
+      bossMidJoin(pl, c);   // バトル中の途中参加
+      return;
+    }
+    if (d.t === 'bdiff') {   // 参加者が難易度を変えた（次の戦いから反映）
+      const p = net.players.find(p => p.conn === c);
+      if (p && DIFFS[d.diff]) { p.diff = d.diff; const i = net.players.indexOf(p); if (net.runRoster && net.runRoster[i]) net.runRoster[i].diff = d.diff; }
       return;
     }
     if (d.t === 'bye') { bossConnClosed(c); return; }
@@ -3200,7 +3268,12 @@ function onBossNet(d, c){
     case 'blobby': renderBossPlayers(d.players); bossStatus(`参加者 ${d.players.length} / ${BOSS_MAX} 人　— ホストのスタートを待っています…`); return;
     case 'bfull': bossStatus(d.m, true); $('bossEntry').style.display = ''; netClose(); return;
     case 'bye': bossHostLost(); return;
-    case 'bstart': startBoss({ role: 'guest', seed: d.seed, roster: d.roster, you: d.you, idx: d.idx || 0, totals: d.totals, lap: d.lap || 0 }); return;
+    case 'bstart':
+      startBoss({ role: 'guest', seed: d.seed, roster: d.roster, you: d.you, idx: d.idx || 0, totals: d.totals, lap: d.lap || 0 });
+      if (d.mid) applyMidJoin(d.mid);
+      return;
+    case 'bwait': renderBossPlayers(d.players); $('bossEntry').style.display = 'none';
+      bossStatus('バトルの途中です。次のボスから参加します…'); return;
   }
   if (!game || game.mode !== 'boss') return;
   switch (d.t) {
@@ -3227,6 +3300,13 @@ function onBossNet(d, c){
       break;
     }
     case 'bex': applyBossFx(d); break;
+    case 'bjoin': {   // ほかの人が途中参加した
+      const i = game.tanks.length;
+      game.tanks.push(mkBossTank(d.pl, i, d.x)); game.totals.push(0);
+      setMsg(`${d.pl.name} さんが途中参加しました！`, 'info');
+      addFloat(`${d.pl.name} 参戦！`, d.x, terrainAt(d.x) - 50, d.pl.color);
+      break;
+    }
     case 'bfx': useBoss(d.bi || 0); bossMouthFx(d.h, d.f); break;
     case 'fire': fireFx(d.side, !!d.b); break;
     case 'fly': sfx.fly(); break;
